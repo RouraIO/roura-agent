@@ -7,9 +7,25 @@ from rich.console import Console
 from rich.table import Table
 
 from .ollama import list_models, get_base_url, generate, chat
+from .tools.doctor import run_all_checks, format_results, has_critical_failures
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
+
+
+@app.command()
+def doctor(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """
+    Run system health diagnostics.
+    """
+    results = run_all_checks()
+    output = format_results(results, use_json=json_output)
+    console.print(output)
+
+    if has_critical_failures(results):
+        raise typer.Exit(code=1)
 
 
 @app.command()
