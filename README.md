@@ -1,6 +1,6 @@
 # roura-agent
 
-Local “Claude Code”-style agent CLI powered by Ollama.
+Local-first AI coding agent CLI powered by Ollama.
 
 ## Setup
 python3 -m venv .venv
