@@ -301,3 +301,249 @@ class TestFsListCLI:
 
         assert result.exit_code == 1
         assert "Error" in result.output
+
+
+# --- Write Tool Tests ---
+
+from roura_agent.tools.fs import FsWriteTool, fs_write, write_file
+
+
+class TestFsWriteTool:
+    """Tests for the fs.write tool."""
+
+    def test_tool_properties(self):
+        """Tool should have correct properties."""
+        assert fs_write.name == "fs.write"
+        assert fs_write.risk_level == RiskLevel.MODERATE
+        assert fs_write.requires_approval is True
+
+    def test_write_new_file(self, tmp_path):
+        """Should create a new file."""
+        test_file = tmp_path / "new.txt"
+        content = "hello world\n"
+
+        result = write_file(str(test_file), content)
+
+        assert result.success is True
+        assert result.output["action"] == "created"
+        assert test_file.exists()
+        assert test_file.read_text() == content
+
+    def test_overwrite_existing_file(self, tmp_path):
+        """Should overwrite an existing file."""
+        test_file = tmp_path / "existing.txt"
+        test_file.write_text("old content\n")
+
+        result = write_file(str(test_file), "new content\n")
+
+        assert result.success is True
+        assert result.output["action"] == "overwritten"
+        assert test_file.read_text() == "new content\n"
+
+    def test_write_reports_stats(self, tmp_path):
+        """Should report lines and bytes written."""
+        test_file = tmp_path / "stats.txt"
+        content = "line 1\nline 2\nline 3\n"
+
+        result = write_file(str(test_file), content)
+
+        assert result.success is True
+        assert result.output["lines"] == 3
+        assert result.output["bytes"] == len(content.encode("utf-8"))
+
+    def test_write_fails_if_parent_missing(self, tmp_path):
+        """Should fail if parent directory doesn't exist."""
+        test_file = tmp_path / "nonexistent" / "file.txt"
+
+        result = write_file(str(test_file), "content")
+
+        assert result.success is False
+        assert "Parent directory" in result.error
+
+    def test_write_creates_parent_dirs(self, tmp_path):
+        """Should create parent directories with create_dirs=True."""
+        test_file = tmp_path / "deep" / "nested" / "file.txt"
+
+        result = write_file(str(test_file), "content", create_dirs=True)
+
+        assert result.success is True
+        assert test_file.exists()
+        assert test_file.read_text() == "content"
+
+    def test_write_fails_for_directory(self, tmp_path):
+        """Should fail when trying to write to a directory."""
+        result = write_file(str(tmp_path), "content")
+
+        assert result.success is False
+        assert "directory" in result.error.lower()
+
+    def test_dry_run_description(self, tmp_path):
+        """Dry run should describe what would happen."""
+        test_file = tmp_path / "test.txt"
+        description = fs_write.dry_run(str(test_file), "hello\nworld\n")
+
+        assert "Create" in description
+        assert "2 lines" in description
+
+    def test_dry_run_overwrite(self, tmp_path):
+        """Dry run should say 'Overwrite' for existing files."""
+        test_file = tmp_path / "existing.txt"
+        test_file.write_text("old")
+
+        description = fs_write.dry_run(str(test_file), "new")
+
+        assert "Overwrite" in description
+
+    def test_preview_new_file(self, tmp_path):
+        """Preview should indicate new file creation."""
+        test_file = tmp_path / "new.txt"
+        preview = fs_write.preview(str(test_file), "content")
+
+        assert preview["exists"] is False
+        assert preview["action"] == "create"
+        assert preview["new_content"] == "content"
+        assert preview["diff"] is None
+
+    def test_preview_existing_file(self, tmp_path):
+        """Preview should show diff for existing file."""
+        test_file = tmp_path / "existing.txt"
+        test_file.write_text("old\n")
+
+        preview = fs_write.preview(str(test_file), "new\n")
+
+        assert preview["exists"] is True
+        assert preview["action"] == "overwrite"
+        assert preview["old_content"] == "old\n"
+        assert preview["diff"] is not None
+        assert "-old" in preview["diff"]
+        assert "+new" in preview["diff"]
+
+
+class TestFsWriteCLI:
+    """Tests for the fs write CLI command."""
+
+    def test_write_requires_content(self):
+        """Should require --content or --from-file."""
+        result = runner.invoke(app, ["fs", "write", "test.txt"])
+
+        assert result.exit_code == 1
+        assert "Must provide" in result.output
+
+    def test_write_dry_run(self, tmp_path):
+        """Should show preview without writing in dry-run mode."""
+        test_file = tmp_path / "test.txt"
+
+        result = runner.invoke(app, [
+            "fs", "write", str(test_file),
+            "--content", "hello world",
+            "--dry-run"
+        ])
+
+        assert result.exit_code == 0
+        assert "Dry run" in result.output
+        assert not test_file.exists()
+
+    def test_write_with_force(self, tmp_path):
+        """Should skip approval with --force."""
+        test_file = tmp_path / "test.txt"
+
+        result = runner.invoke(app, [
+            "fs", "write", str(test_file),
+            "--content", "hello world",
+            "--force"
+        ])
+
+        assert result.exit_code == 0
+        assert test_file.exists()
+        assert test_file.read_text() == "hello world"
+
+    def test_write_shows_preview_for_new_file(self, tmp_path):
+        """Should show content preview for new files."""
+        test_file = tmp_path / "test.txt"
+
+        result = runner.invoke(app, [
+            "fs", "write", str(test_file),
+            "--content", "line 1\nline 2",
+            "--dry-run"
+        ])
+
+        assert result.exit_code == 0
+        assert "CREATE" in result.output
+        assert "Content preview" in result.output
+
+    def test_write_shows_diff_for_existing_file(self, tmp_path):
+        """Should show diff for existing files."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("old content\n")
+
+        result = runner.invoke(app, [
+            "fs", "write", str(test_file),
+            "--content", "new content\n",
+            "--dry-run"
+        ])
+
+        assert result.exit_code == 0
+        assert "OVERWRITE" in result.output
+        assert "Diff" in result.output
+
+    def test_write_from_file(self, tmp_path):
+        """Should read content from another file."""
+        source_file = tmp_path / "source.txt"
+        source_file.write_text("content from source")
+        dest_file = tmp_path / "dest.txt"
+
+        result = runner.invoke(app, [
+            "fs", "write", str(dest_file),
+            "--from-file", str(source_file),
+            "--force"
+        ])
+
+        assert result.exit_code == 0
+        assert dest_file.read_text() == "content from source"
+
+    def test_write_approval_cancelled(self, tmp_path):
+        """Should cancel write when user says no."""
+        test_file = tmp_path / "test.txt"
+
+        result = runner.invoke(app, [
+            "fs", "write", str(test_file),
+            "--content", "hello"
+        ], input="no\n")
+
+        assert result.exit_code == 0
+        assert "cancelled" in result.output.lower()
+        assert not test_file.exists()
+
+    def test_write_approval_accepted(self, tmp_path):
+        """Should write when user says yes."""
+        test_file = tmp_path / "test.txt"
+
+        result = runner.invoke(app, [
+            "fs", "write", str(test_file),
+            "--content", "hello"
+        ], input="yes\n")
+
+        assert result.exit_code == 0
+        assert test_file.exists()
+        assert test_file.read_text() == "hello"
+
+    def test_write_json_output(self, tmp_path):
+        """Should output JSON with --json flag."""
+        test_file = tmp_path / "test.txt"
+
+        result = runner.invoke(app, [
+            "fs", "write", str(test_file),
+            "--content", "hello",
+            "--force",
+            "--json"
+        ])
+
+        assert result.exit_code == 0
+        # Find the JSON object in the output (starts with { and ends with })
+        output = result.output
+        json_start = output.rfind("{")
+        json_end = output.rfind("}") + 1
+        json_str = output[json_start:json_end]
+        parsed = json.loads(json_str)
+        assert "path" in parsed
+        assert "action" in parsed

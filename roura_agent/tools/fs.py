@@ -179,13 +179,143 @@ class FsListTool(Tool):
         return f"Would list contents of {dir_path} ({hidden})"
 
 
+@dataclass
+class FsWriteTool(Tool):
+    """Write content to a file."""
+
+    name: str = "fs.write"
+    description: str = "Write content to a file (create or overwrite)"
+    risk_level: RiskLevel = RiskLevel.MODERATE
+    parameters: list[ToolParam] = field(default_factory=lambda: [
+        ToolParam("path", str, "Path to the file to write", required=True),
+        ToolParam("content", str, "Content to write to the file", required=True),
+        ToolParam("create_dirs", bool, "Create parent directories if needed", required=False, default=False),
+    ])
+
+    def execute(
+        self,
+        path: str,
+        content: str,
+        create_dirs: bool = False,
+    ) -> ToolResult:
+        """Write content to a file."""
+        try:
+            file_path = Path(path).resolve()
+
+            # Check if parent directory exists
+            if not file_path.parent.exists():
+                if create_dirs:
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                else:
+                    return ToolResult(
+                        success=False,
+                        output=None,
+                        error=f"Parent directory does not exist: {file_path.parent}",
+                    )
+
+            # Check if path is a directory
+            if file_path.exists() and file_path.is_dir():
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"Cannot write to directory: {path}",
+                )
+
+            # Track if this is a new file or overwrite
+            is_new = not file_path.exists()
+            old_content = None
+            if not is_new:
+                try:
+                    old_content = file_path.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    pass
+
+            # Write the file
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(content)
+
+            # Calculate stats
+            lines_written = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+            bytes_written = len(content.encode("utf-8"))
+
+            output = {
+                "path": str(file_path),
+                "action": "created" if is_new else "overwritten",
+                "lines": lines_written,
+                "bytes": bytes_written,
+            }
+
+            return ToolResult(success=True, output=output)
+
+        except PermissionError:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"Permission denied: {path}",
+            )
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"Error writing file: {e}",
+            )
+
+    def dry_run(self, path: str, content: str, create_dirs: bool = False) -> str:
+        """Describe what would be written."""
+        file_path = Path(path).resolve()
+        lines = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+        bytes_count = len(content.encode("utf-8"))
+        exists = file_path.exists()
+
+        action = "Overwrite" if exists else "Create"
+        return f"{action} {file_path} ({lines} lines, {bytes_count} bytes)"
+
+    def preview(self, path: str, content: str) -> dict:
+        """Generate a preview of the write operation."""
+        file_path = Path(path).resolve()
+        exists = file_path.exists()
+
+        preview = {
+            "path": str(file_path),
+            "exists": exists,
+            "action": "overwrite" if exists else "create",
+            "new_content": content,
+            "old_content": None,
+            "diff": None,
+        }
+
+        if exists:
+            try:
+                old_content = file_path.read_text(encoding="utf-8", errors="replace")
+                preview["old_content"] = old_content
+
+                # Generate simple diff
+                old_lines = old_content.splitlines(keepends=True)
+                new_lines = content.splitlines(keepends=True)
+
+                import difflib
+                diff = list(difflib.unified_diff(
+                    old_lines,
+                    new_lines,
+                    fromfile=f"a/{file_path.name}",
+                    tofile=f"b/{file_path.name}",
+                ))
+                preview["diff"] = "".join(diff)
+            except Exception:
+                pass
+
+        return preview
+
+
 # Create tool instances
 fs_read = FsReadTool()
 fs_list = FsListTool()
+fs_write = FsWriteTool()
 
 # Register tools
 registry.register(fs_read)
 registry.register(fs_list)
+registry.register(fs_write)
 
 
 def read_file(path: str, offset: int = 1, lines: int = 0) -> ToolResult:
@@ -196,3 +326,8 @@ def read_file(path: str, offset: int = 1, lines: int = 0) -> ToolResult:
 def list_directory(path: str, show_all: bool = False) -> ToolResult:
     """Convenience function to list a directory."""
     return fs_list.execute(path=path, all=show_all)
+
+
+def write_file(path: str, content: str, create_dirs: bool = False) -> ToolResult:
+    """Convenience function to write a file."""
+    return fs_write.execute(path=path, content=content, create_dirs=create_dirs)
