@@ -12,5 +12,17 @@ dependencies = [
   "python-dotenv>=1.0.1"
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-cov>=4.1.0",
+]
+
 [project.scripts]
 roura-agent = "roura_agent.cli:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
