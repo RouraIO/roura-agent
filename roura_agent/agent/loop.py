@@ -76,7 +76,7 @@ class AgentLoop:
         agent.process("Fix the bug in main.py")  # Single request
     """
 
-    SYSTEM_PROMPT = """You are Roura Agent, a local-first AI coding assistant created by Roura.io.
+    BASE_SYSTEM_PROMPT = """You are Roura Agent, a local-first AI coding assistant created by Roura.io.
 
 You help developers with:
 - Reading and understanding code
@@ -111,12 +111,15 @@ When you need to use a tool, respond with a JSON block:
 
 For multiple tools, use multiple blocks.
 
+The user is working in a specific project directory. You can reference files by their relative path from the project root. When they ask to "review X" or "look at X", find the matching file in the project.
+
 Always think step by step and explain your reasoning."""
 
     def __init__(
         self,
         console: Optional[Console] = None,
         config: Optional[AgentConfig] = None,
+        project: Optional[Any] = None,
     ):
         self.console = console or Console()
         self.config = config or AgentConfig()
@@ -124,9 +127,22 @@ Always think step by step and explain your reasoning."""
         self.planner = Planner(self.console)
         self.state = AgentState.IDLE
         self._interrupted = False
+        self.project = project
+
+        # Build system prompt with project context
+        system_prompt = self.BASE_SYSTEM_PROMPT
+
+        if project:
+            from ..config import get_project_context_prompt
+            project_context = get_project_context_prompt(project)
+            system_prompt += f"\n\n{project_context}"
+
+            # Set context cwd
+            self.context.cwd = str(project.root)
+            self.context.project_root = str(project.root)
 
         # Initialize system message
-        self.context.add_message("system", self.SYSTEM_PROMPT)
+        self.context.add_message("system", system_prompt)
 
     def _extract_tool_calls(self, text: str) -> list[dict]:
         """Extract tool calls from response text."""

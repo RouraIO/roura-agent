@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.prompt import Prompt, Confirm
 
 from .ollama import list_models, get_base_url, get_model
 from .tools.doctor import run_all_checks, format_results, has_critical_failures
@@ -21,6 +22,11 @@ from .tools.fs import read_file, list_directory, write_file, edit_file, fs_write
 from .tools.git import get_status, get_diff, get_log, stage_files, create_commit, git_add, git_commit
 from .tools.shell import run_command, shell_exec
 from .tools.base import registry
+from .config import (
+    load_config, save_config, load_credentials, save_credentials,
+    apply_config_to_env, get_effective_config, detect_project,
+    Config, Credentials, CONFIG_FILE, CREDENTIALS_FILE,
+)
 
 # Import these to ensure tools are registered
 from .tools import github, jira
@@ -59,7 +65,11 @@ def main(ctx: typer.Context):
 
 def _run_agent():
     """Launch the interactive agent."""
-    from .agent.loop import AgentLoop, AgentConfig
+    from .agent.loop import AgentLoop, AgentConfig as LoopConfig
+
+    # Load and apply configuration
+    config, creds = get_effective_config()
+    apply_config_to_env(config, creds)
 
     # Display logo
     console.print(LOGO)
@@ -68,23 +78,30 @@ def _run_agent():
     model = get_model()
     if not model:
         console.print("[red]Error:[/red] OLLAMA_MODEL not set")
-        console.print("[dim]Set it with: export OLLAMA_MODEL=qwen2.5-coder:32b[/dim]")
+        console.print("[dim]Run 'roura-agent setup' to configure, or:[/dim]")
+        console.print("[dim]  export OLLAMA_MODEL=qwen2.5-coder:32b[/dim]")
         raise typer.Exit(1)
 
-    # Show config
+    # Detect project
+    project = detect_project()
+
+    # Show config and project info
     console.print(f"[dim]Model: {model}[/dim]")
     console.print(f"[dim]Endpoint: {get_base_url()}[/dim]")
+    console.print(f"[bold cyan]Project:[/bold cyan] {project.name} [dim]({project.type})[/dim]")
+    if project.git_branch:
+        console.print(f"[dim]Branch: {project.git_branch} • {len(project.files)} files[/dim]")
     console.print()
 
     # Run agent
-    config = AgentConfig(
+    loop_config = LoopConfig(
         max_tool_calls=3,
         require_plan_approval=True,
         require_tool_approval=True,
         stream_responses=True,
     )
 
-    agent = AgentLoop(console=console, config=config)
+    agent = AgentLoop(console=console, config=loop_config, project=project)
     agent.run()
 
 
@@ -146,17 +163,169 @@ def ping():
 @app.command()
 def config():
     """Show current configuration."""
+    cfg, creds = get_effective_config()
+
     table = Table(title="Configuration")
     table.add_column("Setting", style="cyan")
     table.add_column("Value")
+    table.add_column("Source", style="dim")
 
-    table.add_row("OLLAMA_BASE_URL", os.getenv("OLLAMA_BASE_URL", "[dim]not set[/dim]"))
-    table.add_row("OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "[dim]not set[/dim]"))
-    table.add_row("JIRA_URL", os.getenv("JIRA_URL", "[dim]not set[/dim]"))
-    table.add_row("JIRA_EMAIL", os.getenv("JIRA_EMAIL", "[dim]not set[/dim]"))
-    table.add_row("JIRA_TOKEN", "[dim]***[/dim]" if os.getenv("JIRA_TOKEN") else "[dim]not set[/dim]")
+    # Ollama
+    ollama_url = cfg.ollama.base_url or "[dim]not set[/dim]"
+    ollama_src = "env" if os.getenv("OLLAMA_BASE_URL") else ("file" if cfg.ollama.base_url else "-")
+    table.add_row("OLLAMA_BASE_URL", ollama_url, ollama_src)
+
+    ollama_model = cfg.ollama.model or "[dim]not set[/dim]"
+    model_src = "env" if os.getenv("OLLAMA_MODEL") else ("file" if cfg.ollama.model else "-")
+    table.add_row("OLLAMA_MODEL", ollama_model, model_src)
+
+    # Jira
+    jira_url = cfg.jira.url or "[dim]not set[/dim]"
+    jira_url_src = "env" if os.getenv("JIRA_URL") else ("file" if cfg.jira.url else "-")
+    table.add_row("JIRA_URL", jira_url, jira_url_src)
+
+    jira_email = cfg.jira.email or "[dim]not set[/dim]"
+    jira_email_src = "env" if os.getenv("JIRA_EMAIL") else ("file" if cfg.jira.email else "-")
+    table.add_row("JIRA_EMAIL", jira_email, jira_email_src)
+
+    jira_token = "[dim]***[/dim]" if creds.jira_token else "[dim]not set[/dim]"
+    token_src = "env" if os.getenv("JIRA_TOKEN") else ("file" if creds.jira_token else "-")
+    table.add_row("JIRA_TOKEN", jira_token, token_src)
 
     console.print(table)
+    console.print(f"\n[dim]Config file: {CONFIG_FILE}[/dim]")
+    console.print(f"[dim]Run 'roura-agent setup' to configure interactively[/dim]")
+
+
+@app.command()
+def setup():
+    """Interactive configuration wizard."""
+    console.print(Panel(
+        "[bold]Roura Agent Setup[/bold]\n\n"
+        "This wizard will help you configure Roura Agent.\n"
+        "Press Enter to keep current values.",
+        title="🔧 Setup",
+        border_style="cyan",
+    ))
+
+    # Load existing config
+    cfg = load_config()
+    creds = load_credentials()
+
+    console.print("\n[bold cyan]1. Ollama Configuration[/bold cyan]\n")
+
+    # Ollama Base URL
+    current_url = cfg.ollama.base_url or "http://localhost:11434"
+    new_url = Prompt.ask(
+        "Ollama Base URL",
+        default=current_url,
+    )
+    cfg.ollama.base_url = new_url
+
+    # Test connection and list models
+    console.print("[dim]Testing connection...[/dim]")
+    try:
+        models = list_models(new_url)
+        if models:
+            console.print(f"[green]✓[/green] Connected. Found {len(models)} models.")
+
+            # Let user pick a model
+            console.print("\nAvailable models:")
+            for i, m in enumerate(models[:10], 1):
+                console.print(f"  {i}. {m}")
+
+            current_model = cfg.ollama.model or (models[0] if models else "")
+            new_model = Prompt.ask(
+                "\nOllama Model",
+                default=current_model,
+            )
+            cfg.ollama.model = new_model
+        else:
+            console.print("[yellow]⚠[/yellow] No models found. Install one with: ollama pull qwen2.5-coder:32b")
+            cfg.ollama.model = Prompt.ask("Ollama Model (manual entry)", default=cfg.ollama.model or "")
+    except Exception as e:
+        console.print(f"[red]✗[/red] Could not connect: {e}")
+        cfg.ollama.model = Prompt.ask("Ollama Model (manual entry)", default=cfg.ollama.model or "")
+
+    # Jira Configuration
+    console.print("\n[bold cyan]2. Jira Configuration (optional)[/bold cyan]\n")
+
+    if Confirm.ask("Configure Jira integration?", default=bool(cfg.jira.url)):
+        cfg.jira.url = Prompt.ask(
+            "Jira URL (e.g., https://company.atlassian.net)",
+            default=cfg.jira.url or "",
+        )
+        cfg.jira.email = Prompt.ask(
+            "Jira Email",
+            default=cfg.jira.email or "",
+        )
+
+        # Token - show masked if exists
+        token_display = "***" if creds.jira_token else ""
+        console.print("[dim]API Token: Create one at https://id.atlassian.com/manage-profile/security/api-tokens[/dim]")
+        new_token = Prompt.ask(
+            "Jira API Token",
+            default=token_display,
+            password=True,
+        )
+        if new_token and new_token != "***":
+            creds.jira_token = new_token
+
+    # GitHub Configuration
+    console.print("\n[bold cyan]3. GitHub Configuration[/bold cyan]\n")
+    console.print("[dim]GitHub uses the 'gh' CLI. Checking authentication...[/dim]")
+
+    import subprocess
+    try:
+        result = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            console.print("[green]✓[/green] GitHub CLI is authenticated")
+        else:
+            console.print("[yellow]⚠[/yellow] Not authenticated. Run: gh auth login")
+    except FileNotFoundError:
+        console.print("[yellow]⚠[/yellow] GitHub CLI not found. Install with: brew install gh")
+    except Exception as e:
+        console.print(f"[yellow]⚠[/yellow] Could not check: {e}")
+
+    cfg.github.default_base_branch = Prompt.ask(
+        "Default base branch for PRs",
+        default=cfg.github.default_base_branch or "main",
+    )
+
+    # Save
+    console.print("\n[bold cyan]Saving configuration...[/bold cyan]")
+    save_config(cfg)
+    save_credentials(creds)
+
+    console.print(f"[green]✓[/green] Config saved to {CONFIG_FILE}")
+    if creds.jira_token:
+        console.print(f"[green]✓[/green] Credentials saved to {CREDENTIALS_FILE} (permissions: 600)")
+
+    console.print("\n[bold green]Setup complete![/bold green]")
+    console.print("[dim]Run 'roura-agent' to start.[/dim]")
+
+
+@app.command()
+def project():
+    """Show information about the current project."""
+    proj = detect_project()
+
+    console.print(Panel(
+        f"[bold]{proj.name}[/bold]\n"
+        f"Type: {proj.type}\n"
+        f"Root: {proj.root}\n"
+        f"Branch: {proj.git_branch or 'N/A'}\n"
+        f"Files: {len(proj.files)}",
+        title="📁 Project",
+        border_style="cyan",
+    ))
+
+    # Show structure
+    from .config import format_structure_tree
+    tree = format_structure_tree(proj.structure, max_depth=3)
+    if tree:
+        console.print("\n[bold]Structure:[/bold]")
+        console.print(tree)
 
 
 # --- Filesystem Tools ---
