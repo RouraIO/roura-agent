@@ -25,13 +25,11 @@ from rich.panel import Panel
 from rich.markdown import Markdown
 from rich.prompt import Prompt, Confirm
 from rich.text import Text
-from rich.live import Live
-from rich.spinner import Spinner
 from rich.table import Table
 
 from .context import AgentContext
 from .planner import Planner, Plan, PlanStep, StepType
-from ..stream import stream_chat, StreamResult
+from ..stream import stream_chat_live, StreamResult
 from ..tools.base import registry, ToolResult, RiskLevel
 
 
@@ -277,49 +275,18 @@ Always think step by step and explain your reasoning."""
             return False
 
     def _stream_response(self, user_input: str) -> StreamResult:
-        """Get streaming response from LLM."""
+        """Get streaming response from LLM with live token display."""
         self.context.add_message("user", user_input)
         messages = self.context.get_messages_for_llm()
 
         self.console.print()
-        self.console.print("[dim]Press ESC to interrupt[/dim]")
 
-        # Collect response with live display
-        buffer = []
+        # Use live streaming - handles display internally
+        result = stream_chat_live(messages, console=self.console)
 
-        def on_token(token: str):
-            buffer.append(token)
-
-        with Live(
-            Spinner("dots", text="Thinking...", style="cyan"),
-            console=self.console,
-            refresh_per_second=10,
-        ) as live:
-            result = stream_chat(messages, on_token=on_token)
-
-            # Update display periodically
-            if buffer:
-                try:
-                    live.update(Markdown("".join(buffer)))
-                except Exception:
-                    live.update(Text("".join(buffer)))
-
-        # Display final response
+        # Add to context if we got content
         if result.content:
-            self.console.print()
-            try:
-                self.console.print(Markdown(result.content))
-            except Exception:
-                self.console.print(result.content)
-
-            # Add to context
             self.context.add_message("assistant", result.content)
-
-        if result.interrupted:
-            self.console.print("\n[yellow]Interrupted[/yellow]")
-
-        if result.error:
-            self.console.print(f"\n[red]Error: {result.error}[/red]")
 
         return result
 
