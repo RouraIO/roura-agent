@@ -9,10 +9,13 @@ from rich.table import Table
 from .ollama import list_models, get_base_url, generate, chat
 from .tools.doctor import run_all_checks, format_results, has_critical_failures
 from .tools.fs import read_file, list_directory, write_file, edit_file, fs_write, fs_edit
+from .tools.git import get_status, get_diff, get_log
 
 app = typer.Typer(no_args_is_help=True)
 fs_app = typer.Typer(help="Filesystem tools")
+git_app = typer.Typer(help="Git tools")
 app.add_typer(fs_app, name="fs")
+app.add_typer(git_app, name="git")
 console = Console()
 
 
@@ -271,6 +274,136 @@ def fs_edit_cmd(
         output = result.output
         console.print(f"[green]✓[/green] Edited {output['path']}")
         console.print(f"[dim]{output['replacements']} replacement(s) made[/dim]")
+
+
+# --- Git Tools ---
+
+
+@git_app.command("status")
+def git_status_cmd(
+    path: str = typer.Argument(".", help="Path to repository"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """
+    Show the working tree status.
+    """
+    result = get_status(path=path)
+
+    if not result.success:
+        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        import json
+        print(json.dumps(result.output, indent=2))
+    else:
+        output = result.output
+        console.print(f"[bold]Repository:[/bold] {output['repo_root']}")
+        console.print(f"[bold]Branch:[/bold] {output['branch']}")
+
+        if output["clean"]:
+            console.print("\n[green]Working tree clean[/green]")
+        else:
+            if output["staged"]:
+                console.print("\n[bold green]Staged changes:[/bold green]")
+                for item in output["staged"]:
+                    console.print(f"  [green]{item['status']}[/green] {item['file']}")
+
+            if output["modified"]:
+                console.print("\n[bold yellow]Modified:[/bold yellow]")
+                for f in output["modified"]:
+                    console.print(f"  [yellow]M[/yellow] {f}")
+
+            if output["untracked"]:
+                console.print("\n[bold red]Untracked:[/bold red]")
+                for f in output["untracked"]:
+                    console.print(f"  [red]?[/red] {f}")
+
+
+@git_app.command("diff")
+def git_diff_cmd(
+    path: str = typer.Argument(".", help="Path to repository or file"),
+    staged: bool = typer.Option(False, "--staged", "-s", help="Show staged changes"),
+    commit: str = typer.Option(None, "--commit", "-c", help="Compare against specific commit"),
+    stat_only: bool = typer.Option(False, "--stat", help="Show only diffstat"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """
+    Show changes between commits, commit and working tree, etc.
+    """
+    result = get_diff(path=path, staged=staged, commit=commit)
+
+    if not result.success:
+        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        import json
+        print(json.dumps(result.output, indent=2))
+    else:
+        output = result.output
+
+        if not output["has_changes"]:
+            diff_type = "staged" if staged else "unstaged"
+            console.print(f"[dim]No {diff_type} changes[/dim]")
+            return
+
+        if stat_only:
+            console.print(output["stat"])
+        else:
+            # Color the diff output
+            for line in output["diff"].splitlines():
+                if line.startswith("+") and not line.startswith("+++"):
+                    console.print(f"[green]{line}[/green]")
+                elif line.startswith("-") and not line.startswith("---"):
+                    console.print(f"[red]{line}[/red]")
+                elif line.startswith("@@"):
+                    console.print(f"[cyan]{line}[/cyan]")
+                elif line.startswith("diff ") or line.startswith("index "):
+                    console.print(f"[bold]{line}[/bold]")
+                else:
+                    console.print(line)
+
+
+@git_app.command("log")
+def git_log_cmd(
+    path: str = typer.Argument(".", help="Path to repository"),
+    count: int = typer.Option(10, "--count", "-n", help="Number of commits to show"),
+    oneline: bool = typer.Option(False, "--oneline", help="Show one line per commit"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """
+    Show commit logs.
+    """
+    result = get_log(path=path, count=count, oneline=oneline)
+
+    if not result.success:
+        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        import json
+        print(json.dumps(result.output, indent=2))
+    else:
+        output = result.output
+
+        if not output["commits"]:
+            console.print("[dim]No commits found[/dim]")
+            return
+
+        for commit in output["commits"]:
+            if oneline:
+                console.print(f"[yellow]{commit['hash'][:7]}[/yellow] {commit['message']}")
+            else:
+                console.print(f"[yellow]commit {commit['hash']}[/yellow]")
+                console.print(f"Author: {commit['author']} <{commit['email']}>")
+                console.print(f"Date:   {commit['date']}")
+                console.print()
+                console.print(f"    {commit['subject']}")
+                if commit.get("body"):
+                    for line in commit["body"].splitlines():
+                        console.print(f"    {line}")
+                console.print()
 
 
 @app.command()
