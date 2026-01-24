@@ -9,7 +9,7 @@ from rich.table import Table
 from .ollama import list_models, get_base_url, generate, chat
 from .tools.doctor import run_all_checks, format_results, has_critical_failures
 from .tools.fs import read_file, list_directory, write_file, edit_file, fs_write, fs_edit
-from .tools.git import get_status, get_diff, get_log
+from .tools.git import get_status, get_diff, get_log, stage_files, create_commit, git_add, git_commit
 
 app = typer.Typer(no_args_is_help=True)
 fs_app = typer.Typer(help="Filesystem tools")
@@ -404,6 +404,149 @@ def git_log_cmd(
                     for line in commit["body"].splitlines():
                         console.print(f"    {line}")
                 console.print()
+
+
+@git_app.command("add")
+def git_add_cmd(
+    files: list[str] = typer.Argument(..., help="Files to stage"),
+    path: str = typer.Option(".", "--path", "-C", help="Path to repository"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be staged without staging"),
+    force: bool = typer.Option(False, "--force", "-y", help="Skip approval prompt"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """
+    Stage files for commit (requires approval).
+    """
+    # Generate preview
+    preview = git_add.preview(files=files, path=path)
+
+    if preview["errors"]:
+        for error in preview["errors"]:
+            console.print(f"[bold red]Error:[/bold red] {error}")
+        raise typer.Exit(code=1)
+
+    # Show what will be staged
+    console.print(f"\n[yellow]STAGE[/yellow] {len(preview['would_stage'])} file(s)")
+    for f in preview["would_stage"][:20]:
+        console.print(f"  [green]+[/green] {f}")
+    if len(preview["would_stage"]) > 20:
+        console.print(f"  [dim]... and {len(preview['would_stage']) - 20} more files[/dim]")
+
+    console.print()
+
+    # Dry run stops here
+    if dry_run:
+        console.print("[dim]Dry run - no changes made[/dim]")
+        return
+
+    # Approval gate
+    if not force:
+        console.print("[bold yellow]APPROVE_ADD?[/bold yellow] (yes/no) ", end="")
+        try:
+            response = input().strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[red]Aborted[/red]")
+            raise typer.Exit(code=1)
+
+        if response not in ("yes", "y"):
+            console.print("[red]Add cancelled[/red]")
+            raise typer.Exit(code=0)
+
+    # Execute add
+    result = stage_files(files=files, path=path)
+
+    if not result.success:
+        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        import json
+        print(json.dumps(result.output, indent=2))
+    else:
+        output = result.output
+        console.print(f"[green]✓[/green] Staged {output['staged_count']} file(s)")
+
+
+@git_app.command("commit")
+def git_commit_cmd(
+    message: str = typer.Option(..., "--message", "-m", help="Commit message"),
+    path: str = typer.Option(".", "--path", "-C", help="Path to repository"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be committed without committing"),
+    force: bool = typer.Option(False, "--force", "-y", help="Skip approval prompt"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """
+    Create a commit with staged changes (requires approval).
+    """
+    # Generate preview
+    preview = git_commit.preview(message=message, path=path)
+
+    if preview["error"]:
+        console.print(f"[bold red]Error:[/bold red] {preview['error']}")
+        raise typer.Exit(code=1)
+
+    # Show what will be committed
+    console.print(f"\n[yellow]COMMIT[/yellow] {len(preview['staged_files'])} file(s)")
+    console.print(f"[bold]Message:[/bold] {message}")
+    console.print()
+
+    console.print("[bold]Staged files:[/bold]")
+    for item in preview["staged_files"][:20]:
+        status_color = {"M": "yellow", "A": "green", "D": "red", "R": "cyan"}.get(item["status"], "white")
+        console.print(f"  [{status_color}]{item['status']}[/{status_color}] {item['file']}")
+    if len(preview["staged_files"]) > 20:
+        console.print(f"  [dim]... and {len(preview['staged_files']) - 20} more files[/dim]")
+
+    # Show diff preview
+    if preview["staged_diff"]:
+        console.print("\n[bold]Diff preview:[/bold]")
+        diff_lines = preview["staged_diff"].splitlines()[:30]
+        for line in diff_lines:
+            if line.startswith("+") and not line.startswith("+++"):
+                console.print(f"[green]{line}[/green]")
+            elif line.startswith("-") and not line.startswith("---"):
+                console.print(f"[red]{line}[/red]")
+            elif line.startswith("@@"):
+                console.print(f"[cyan]{line}[/cyan]")
+            else:
+                console.print(line)
+        if len(preview["staged_diff"].splitlines()) > 30:
+            console.print(f"[dim]... diff truncated ({len(preview['staged_diff'].splitlines())} total lines)[/dim]")
+
+    console.print()
+
+    # Dry run stops here
+    if dry_run:
+        console.print("[dim]Dry run - no changes made[/dim]")
+        return
+
+    # Approval gate
+    if not force:
+        console.print("[bold yellow]APPROVE_COMMIT?[/bold yellow] (yes/no) ", end="")
+        try:
+            response = input().strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[red]Aborted[/red]")
+            raise typer.Exit(code=1)
+
+        if response not in ("yes", "y"):
+            console.print("[red]Commit cancelled[/red]")
+            raise typer.Exit(code=0)
+
+    # Execute commit
+    result = create_commit(message=message, path=path)
+
+    if not result.success:
+        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        import json
+        print(json.dumps(result.output, indent=2))
+    else:
+        output = result.output
+        console.print(f"[green]✓[/green] Created commit [yellow]{output['short_hash']}[/yellow]")
+        console.print(f"[dim]{output['files_committed']} file(s) committed[/dim]")
 
 
 @app.command()

@@ -300,15 +300,245 @@ class GitLogTool(Tool):
         return f"Would show last {count} commits for {Path(path).resolve()}"
 
 
+@dataclass
+class GitAddTool(Tool):
+    """Stage files for commit."""
+
+    name: str = "git.add"
+    description: str = "Stage files for commit"
+    risk_level: RiskLevel = RiskLevel.MODERATE
+    parameters: list[ToolParam] = field(default_factory=lambda: [
+        ToolParam("files", list, "Files to stage (list of paths)", required=True),
+        ToolParam("path", str, "Path to repository", required=False, default="."),
+    ])
+
+    def execute(
+        self,
+        files: list[str],
+        path: str = ".",
+    ) -> ToolResult:
+        """Stage files for commit."""
+        repo_root = get_repo_root(cwd=path)
+        if not repo_root:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"Not a git repository: {path}",
+            )
+
+        if not files:
+            return ToolResult(
+                success=False,
+                output=None,
+                error="No files specified to add",
+            )
+
+        # Validate files exist
+        missing = []
+        for f in files:
+            file_path = Path(path) / f if not Path(f).is_absolute() else Path(f)
+            if not file_path.exists() and f != ".":
+                missing.append(f)
+
+        if missing:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"Files not found: {', '.join(missing)}",
+            )
+
+        # Run git add
+        success, stdout, stderr = run_git_command(["add"] + files, cwd=path)
+
+        if not success:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"git add failed: {stderr}",
+            )
+
+        # Get status to show what was staged
+        _, status_out, _ = run_git_command(["status", "--porcelain"], cwd=path)
+        staged = []
+        for line in status_out.splitlines():
+            if line and line[0] in "MADRC":
+                staged.append({"status": line[0], "file": line[3:]})
+
+        output = {
+            "repo_root": repo_root,
+            "files_requested": files,
+            "staged": staged,
+            "staged_count": len(staged),
+        }
+
+        return ToolResult(success=True, output=output)
+
+    def dry_run(self, files: list[str], path: str = ".") -> str:
+        """Describe what would be staged."""
+        return f"Would stage {len(files)} file(s): {', '.join(files[:5])}{'...' if len(files) > 5 else ''}"
+
+    def preview(self, files: list[str], path: str = ".") -> dict:
+        """Preview what would be staged."""
+        repo_root = get_repo_root(cwd=path)
+
+        preview = {
+            "repo_root": repo_root,
+            "files": files,
+            "would_stage": [],
+            "errors": [],
+        }
+
+        if not repo_root:
+            preview["errors"].append(f"Not a git repository: {path}")
+            return preview
+
+        # Check each file
+        for f in files:
+            file_path = Path(path) / f if not Path(f).is_absolute() else Path(f)
+            if f == ".":
+                # Get all unstaged/untracked files
+                _, status_out, _ = run_git_command(["status", "--porcelain"], cwd=path)
+                for line in status_out.splitlines():
+                    if line and line[0] == "?" or line[1] in "MD":
+                        preview["would_stage"].append(line[3:])
+            elif file_path.exists():
+                preview["would_stage"].append(f)
+            else:
+                preview["errors"].append(f"File not found: {f}")
+
+        return preview
+
+
+@dataclass
+class GitCommitTool(Tool):
+    """Create a commit."""
+
+    name: str = "git.commit"
+    description: str = "Create a commit with staged changes"
+    risk_level: RiskLevel = RiskLevel.MODERATE
+    parameters: list[ToolParam] = field(default_factory=lambda: [
+        ToolParam("message", str, "Commit message", required=True),
+        ToolParam("path", str, "Path to repository", required=False, default="."),
+    ])
+
+    def execute(
+        self,
+        message: str,
+        path: str = ".",
+    ) -> ToolResult:
+        """Create a commit."""
+        repo_root = get_repo_root(cwd=path)
+        if not repo_root:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"Not a git repository: {path}",
+            )
+
+        if not message or not message.strip():
+            return ToolResult(
+                success=False,
+                output=None,
+                error="Commit message cannot be empty",
+            )
+
+        # Check if there are staged changes
+        _, status_out, _ = run_git_command(["status", "--porcelain"], cwd=path)
+        staged = [line for line in status_out.splitlines() if line and line[0] in "MADRC"]
+
+        if not staged:
+            return ToolResult(
+                success=False,
+                output=None,
+                error="No staged changes to commit",
+            )
+
+        # Run git commit
+        success, stdout, stderr = run_git_command(
+            ["commit", "-m", message],
+            cwd=path,
+        )
+
+        if not success:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"git commit failed: {stderr}",
+            )
+
+        # Get the commit hash
+        _, hash_out, _ = run_git_command(["rev-parse", "HEAD"], cwd=path)
+        commit_hash = hash_out.strip()
+
+        # Get commit info
+        _, log_out, _ = run_git_command(
+            ["log", "-1", "--format=%H%n%s%n%an%n%ai"],
+            cwd=path,
+        )
+        log_lines = log_out.splitlines()
+
+        output = {
+            "repo_root": repo_root,
+            "hash": commit_hash,
+            "short_hash": commit_hash[:7],
+            "message": message,
+            "files_committed": len(staged),
+            "author": log_lines[2] if len(log_lines) > 2 else None,
+            "date": log_lines[3] if len(log_lines) > 3 else None,
+        }
+
+        return ToolResult(success=True, output=output)
+
+    def dry_run(self, message: str, path: str = ".") -> str:
+        """Describe what would be committed."""
+        return f"Would create commit with message: {message[:50]}{'...' if len(message) > 50 else ''}"
+
+    def preview(self, message: str, path: str = ".") -> dict:
+        """Preview what would be committed."""
+        repo_root = get_repo_root(cwd=path)
+
+        preview = {
+            "repo_root": repo_root,
+            "message": message,
+            "staged_files": [],
+            "staged_diff": None,
+            "error": None,
+        }
+
+        if not repo_root:
+            preview["error"] = f"Not a git repository: {path}"
+            return preview
+
+        # Get staged files
+        _, status_out, _ = run_git_command(["status", "--porcelain"], cwd=path)
+        for line in status_out.splitlines():
+            if line and line[0] in "MADRC":
+                preview["staged_files"].append({"status": line[0], "file": line[3:]})
+
+        if not preview["staged_files"]:
+            preview["error"] = "No staged changes to commit"
+            return preview
+
+        # Get staged diff
+        _, diff_out, _ = run_git_command(["diff", "--cached"], cwd=path)
+        preview["staged_diff"] = diff_out
+
+        return preview
+
+
 # Create tool instances
 git_status = GitStatusTool()
 git_diff = GitDiffTool()
 git_log = GitLogTool()
+git_add = GitAddTool()
+git_commit = GitCommitTool()
 
 # Register tools
 registry.register(git_status)
 registry.register(git_diff)
 registry.register(git_log)
+registry.register(git_add)
+registry.register(git_commit)
 
 
 def get_status(path: str = ".") -> ToolResult:
@@ -324,3 +554,13 @@ def get_diff(path: str = ".", staged: bool = False, commit: Optional[str] = None
 def get_log(path: str = ".", count: int = 10, oneline: bool = False) -> ToolResult:
     """Convenience function to get git log."""
     return git_log.execute(path=path, count=count, oneline=oneline)
+
+
+def stage_files(files: list[str], path: str = ".") -> ToolResult:
+    """Convenience function to stage files."""
+    return git_add.execute(files=files, path=path)
+
+
+def create_commit(message: str, path: str = ".") -> ToolResult:
+    """Convenience function to create a commit."""
+    return git_commit.execute(message=message, path=path)

@@ -356,3 +356,276 @@ class TestGitLogCLI:
         parsed = json.loads(result.output)
         assert "commits" in parsed
         assert len(parsed["commits"]) >= 1
+
+
+# --- Git Add Tool Tests ---
+
+from roura_agent.tools.git import GitAddTool, git_add, stage_files
+
+
+class TestGitAddTool:
+    """Tests for the git.add tool."""
+
+    def test_tool_properties(self):
+        """Tool should have correct properties."""
+        assert git_add.name == "git.add"
+        assert git_add.risk_level == RiskLevel.MODERATE
+        assert git_add.requires_approval is True
+
+    def test_add_single_file(self, temp_git_repo):
+        """Should stage a single file."""
+        (temp_git_repo / "new.txt").write_text("content")
+
+        result = stage_files(["new.txt"], path=str(temp_git_repo))
+
+        assert result.success is True
+        assert result.output["staged_count"] >= 1
+
+    def test_add_multiple_files(self, temp_git_repo):
+        """Should stage multiple files."""
+        (temp_git_repo / "file1.txt").write_text("content1")
+        (temp_git_repo / "file2.txt").write_text("content2")
+
+        result = stage_files(["file1.txt", "file2.txt"], path=str(temp_git_repo))
+
+        assert result.success is True
+        assert result.output["staged_count"] >= 2
+
+    def test_add_all_with_dot(self, temp_git_repo):
+        """Should stage all files with '.'."""
+        (temp_git_repo / "new1.txt").write_text("content1")
+        (temp_git_repo / "new2.txt").write_text("content2")
+
+        result = stage_files(["."], path=str(temp_git_repo))
+
+        assert result.success is True
+        assert result.output["staged_count"] >= 2
+
+    def test_add_nonexistent_file(self, temp_git_repo):
+        """Should fail for nonexistent file."""
+        result = stage_files(["nonexistent.txt"], path=str(temp_git_repo))
+
+        assert result.success is False
+        assert "not found" in result.error.lower()
+
+    def test_add_not_a_repo(self, tmp_path):
+        """Should fail for non-repo directory."""
+        (tmp_path / "file.txt").write_text("content")
+
+        result = stage_files(["file.txt"], path=str(tmp_path))
+
+        assert result.success is False
+        assert "not a git repository" in result.error.lower()
+
+    def test_preview(self, temp_git_repo):
+        """Preview should show what would be staged."""
+        (temp_git_repo / "new.txt").write_text("content")
+
+        preview = git_add.preview(["new.txt"], path=str(temp_git_repo))
+
+        assert "new.txt" in preview["would_stage"]
+        assert len(preview["errors"]) == 0
+
+
+# --- Git Commit Tool Tests ---
+
+from roura_agent.tools.git import GitCommitTool, git_commit, create_commit
+
+
+class TestGitCommitTool:
+    """Tests for the git.commit tool."""
+
+    def test_tool_properties(self):
+        """Tool should have correct properties."""
+        assert git_commit.name == "git.commit"
+        assert git_commit.risk_level == RiskLevel.MODERATE
+        assert git_commit.requires_approval is True
+
+    def test_commit_staged_changes(self, temp_git_repo):
+        """Should commit staged changes."""
+        (temp_git_repo / "new.txt").write_text("content")
+        subprocess.run(["git", "add", "new.txt"], cwd=temp_git_repo, capture_output=True)
+
+        result = create_commit("Test commit", path=str(temp_git_repo))
+
+        assert result.success is True
+        assert result.output["hash"] is not None
+        assert result.output["short_hash"] is not None
+        assert result.output["message"] == "Test commit"
+
+    def test_commit_no_staged_changes(self, temp_git_repo):
+        """Should fail when nothing is staged."""
+        result = create_commit("Empty commit", path=str(temp_git_repo))
+
+        assert result.success is False
+        assert "no staged" in result.error.lower()
+
+    def test_commit_empty_message(self, temp_git_repo):
+        """Should fail with empty message."""
+        (temp_git_repo / "new.txt").write_text("content")
+        subprocess.run(["git", "add", "new.txt"], cwd=temp_git_repo, capture_output=True)
+
+        result = create_commit("", path=str(temp_git_repo))
+
+        assert result.success is False
+        assert "empty" in result.error.lower()
+
+    def test_commit_not_a_repo(self, tmp_path):
+        """Should fail for non-repo directory."""
+        result = create_commit("Test", path=str(tmp_path))
+
+        assert result.success is False
+        assert "not a git repository" in result.error.lower()
+
+    def test_preview_shows_staged(self, temp_git_repo):
+        """Preview should show staged files."""
+        (temp_git_repo / "new.txt").write_text("content")
+        subprocess.run(["git", "add", "new.txt"], cwd=temp_git_repo, capture_output=True)
+
+        preview = git_commit.preview("Test commit", path=str(temp_git_repo))
+
+        assert len(preview["staged_files"]) >= 1
+        assert preview["error"] is None
+
+    def test_preview_no_staged(self, temp_git_repo):
+        """Preview should error when nothing staged."""
+        preview = git_commit.preview("Test commit", path=str(temp_git_repo))
+
+        assert preview["error"] is not None
+        assert "no staged" in preview["error"].lower()
+
+
+class TestGitAddCLI:
+    """Tests for the git add CLI command."""
+
+    def test_add_dry_run(self, temp_git_repo):
+        """Should show preview without staging in dry-run mode."""
+        (temp_git_repo / "new.txt").write_text("content")
+
+        result = runner.invoke(app, [
+            "git", "add", "new.txt",
+            "--path", str(temp_git_repo),
+            "--dry-run"
+        ])
+
+        assert result.exit_code == 0
+        assert "Dry run" in result.output
+        # File should not be staged
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=temp_git_repo,
+            capture_output=True,
+            text=True,
+        )
+        assert "??" in status.stdout  # Still untracked
+
+    def test_add_with_force(self, temp_git_repo):
+        """Should skip approval with --force."""
+        (temp_git_repo / "new.txt").write_text("content")
+
+        result = runner.invoke(app, [
+            "git", "add", "new.txt",
+            "--path", str(temp_git_repo),
+            "--force"
+        ])
+
+        assert result.exit_code == 0
+        # File should be staged
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=temp_git_repo,
+            capture_output=True,
+            text=True,
+        )
+        assert "A " in status.stdout or "A" in status.stdout[:2]
+
+    def test_add_approval_cancelled(self, temp_git_repo):
+        """Should cancel add when user says no."""
+        (temp_git_repo / "new.txt").write_text("content")
+
+        result = runner.invoke(app, [
+            "git", "add", "new.txt",
+            "--path", str(temp_git_repo),
+        ], input="no\n")
+
+        assert result.exit_code == 0
+        assert "cancelled" in result.output.lower()
+
+
+class TestGitCommitCLI:
+    """Tests for the git commit CLI command."""
+
+    def test_commit_dry_run(self, temp_git_repo):
+        """Should show preview without committing in dry-run mode."""
+        (temp_git_repo / "new.txt").write_text("content")
+        subprocess.run(["git", "add", "new.txt"], cwd=temp_git_repo, capture_output=True)
+
+        result = runner.invoke(app, [
+            "git", "commit",
+            "--message", "Test commit",
+            "--path", str(temp_git_repo),
+            "--dry-run"
+        ])
+
+        assert result.exit_code == 0
+        assert "Dry run" in result.output
+        # Should still have staged changes
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=temp_git_repo,
+            capture_output=True,
+            text=True,
+        )
+        assert "A " in status.stdout or "A" in status.stdout[:2]
+
+    def test_commit_with_force(self, temp_git_repo):
+        """Should skip approval with --force."""
+        (temp_git_repo / "new.txt").write_text("content")
+        subprocess.run(["git", "add", "new.txt"], cwd=temp_git_repo, capture_output=True)
+
+        result = runner.invoke(app, [
+            "git", "commit",
+            "--message", "Test commit",
+            "--path", str(temp_git_repo),
+            "--force"
+        ])
+
+        assert result.exit_code == 0
+        assert "Created commit" in result.output
+
+    def test_commit_approval_cancelled(self, temp_git_repo):
+        """Should cancel commit when user says no."""
+        (temp_git_repo / "new.txt").write_text("content")
+        subprocess.run(["git", "add", "new.txt"], cwd=temp_git_repo, capture_output=True)
+
+        result = runner.invoke(app, [
+            "git", "commit",
+            "--message", "Test commit",
+            "--path", str(temp_git_repo),
+        ], input="no\n")
+
+        assert result.exit_code == 0
+        assert "cancelled" in result.output.lower()
+
+    def test_commit_json_output(self, temp_git_repo):
+        """Should output JSON with --json flag."""
+        (temp_git_repo / "new.txt").write_text("content")
+        subprocess.run(["git", "add", "new.txt"], cwd=temp_git_repo, capture_output=True)
+
+        result = runner.invoke(app, [
+            "git", "commit",
+            "--message", "Test commit",
+            "--path", str(temp_git_repo),
+            "--force",
+            "--json"
+        ])
+
+        assert result.exit_code == 0
+        # Find the JSON in the output
+        output = result.output
+        json_start = output.rfind("{")
+        json_end = output.rfind("}") + 1
+        json_str = output[json_start:json_end]
+        parsed = json.loads(json_str)
+        assert "hash" in parsed
+        assert "message" in parsed
