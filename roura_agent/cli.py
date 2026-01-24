@@ -1,37 +1,162 @@
+"""
+Roura Agent CLI - Local-first AI coding assistant.
+
+© Roura.io
+"""
 from __future__ import annotations
 
 import os
-import time
+import sys
+import json
 import typer
+from pathlib import Path
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
-from .ollama import list_models, get_base_url, generate, chat
+from .ollama import list_models, get_base_url, get_model
 from .tools.doctor import run_all_checks, format_results, has_critical_failures
 from .tools.fs import read_file, list_directory, write_file, edit_file, fs_write, fs_edit
 from .tools.git import get_status, get_diff, get_log, stage_files, create_commit, git_add, git_commit
+from .tools.shell import run_command, shell_exec
+from .tools.base import registry
 
-app = typer.Typer(no_args_is_help=True)
+# Import these to ensure tools are registered
+from .tools import github, jira
+
+app = typer.Typer(invoke_without_command=True)
 fs_app = typer.Typer(help="Filesystem tools")
 git_app = typer.Typer(help="Git tools")
+shell_app = typer.Typer(help="Shell tools")
 app.add_typer(fs_app, name="fs")
 app.add_typer(git_app, name="git")
+app.add_typer(shell_app, name="shell")
 console = Console()
+
+# ASCII Art Logo
+LOGO = """
+[cyan]
+ ██████╗  ██████╗ ██╗   ██╗██████╗  █████╗
+ ██╔══██╗██╔═══██╗██║   ██║██╔══██╗██╔══██╗
+ ██████╔╝██║   ██║██║   ██║██████╔╝███████║
+ ██╔══██╗██║   ██║██║   ██║██╔══██╗██╔══██║
+ ██║  ██║╚██████╔╝╚██████╔╝██║  ██║██║  ██║
+ ╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝
+[/cyan][dim]  Local AI Coding Assistant • roura.io[/dim]
+"""
+
+
+@app.callback()
+def main(ctx: typer.Context):
+    """
+    Roura Agent - Local-first AI coding assistant by Roura.io.
+    """
+    # If no command given, launch interactive agent
+    if ctx.invoked_subcommand is None:
+        _run_agent()
+
+
+def _run_agent():
+    """Launch the interactive agent."""
+    from .agent.loop import AgentLoop, AgentConfig
+
+    # Display logo
+    console.print(LOGO)
+
+    # Quick health check
+    model = get_model()
+    if not model:
+        console.print("[red]Error:[/red] OLLAMA_MODEL not set")
+        console.print("[dim]Set it with: export OLLAMA_MODEL=qwen2.5-coder:32b[/dim]")
+        raise typer.Exit(1)
+
+    # Show config
+    console.print(f"[dim]Model: {model}[/dim]")
+    console.print(f"[dim]Endpoint: {get_base_url()}[/dim]")
+    console.print()
+
+    # Run agent
+    config = AgentConfig(
+        max_tool_calls=3,
+        require_plan_approval=True,
+        require_tool_approval=True,
+        stream_responses=True,
+    )
+
+    agent = AgentLoop(console=console, config=config)
+    agent.run()
 
 
 @app.command()
 def doctor(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """
-    Run system health diagnostics.
-    """
+    """Run system health diagnostics."""
     results = run_all_checks()
     output = format_results(results, use_json=json_output)
     console.print(output)
 
     if has_critical_failures(results):
         raise typer.Exit(code=1)
+
+
+@app.command()
+def tools():
+    """List all available tools."""
+    table = Table(title="Available Tools")
+    table.add_column("Tool", style="cyan")
+    table.add_column("Risk", justify="center")
+    table.add_column("Description")
+
+    from .tools.base import RiskLevel
+
+    risk_colors = {
+        RiskLevel.SAFE: "green",
+        RiskLevel.MODERATE: "yellow",
+        RiskLevel.DANGEROUS: "red",
+    }
+
+    for name, tool in sorted(registry._tools.items()):
+        color = risk_colors.get(tool.risk_level, "white")
+        risk_text = f"[{color}]{tool.risk_level.value}[/{color}]"
+        table.add_row(name, risk_text, tool.description)
+
+    console.print(table)
+
+
+@app.command()
+def ping():
+    """Ping Ollama and list available models."""
+    base = get_base_url()
+    try:
+        models = list_models(base)
+
+        table = Table(title=f"Ollama @ {base}")
+        table.add_column("Model")
+        for m in models:
+            table.add_row(m)
+
+        console.print(table)
+    except Exception as e:
+        console.print(f"[red]Error connecting to Ollama:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def config():
+    """Show current configuration."""
+    table = Table(title="Configuration")
+    table.add_column("Setting", style="cyan")
+    table.add_column("Value")
+
+    table.add_row("OLLAMA_BASE_URL", os.getenv("OLLAMA_BASE_URL", "[dim]not set[/dim]"))
+    table.add_row("OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "[dim]not set[/dim]"))
+    table.add_row("JIRA_URL", os.getenv("JIRA_URL", "[dim]not set[/dim]"))
+    table.add_row("JIRA_EMAIL", os.getenv("JIRA_EMAIL", "[dim]not set[/dim]"))
+    table.add_row("JIRA_TOKEN", "[dim]***[/dim]" if os.getenv("JIRA_TOKEN") else "[dim]not set[/dim]")
+
+    console.print(table)
 
 
 # --- Filesystem Tools ---
@@ -44,17 +169,14 @@ def fs_read(
     lines: int = typer.Option(0, "--lines", "-n", help="Number of lines to read (0 = all)"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """
-    Read the contents of a file.
-    """
+    """Read the contents of a file."""
     result = read_file(path=path, offset=offset, lines=lines)
 
     if not result.success:
-        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        console.print(f"[red]Error:[/red] {result.error}")
         raise typer.Exit(code=1)
 
     if json_output:
-        import json
         print(json.dumps(result.output, indent=2))
     else:
         output = result.output
@@ -68,17 +190,14 @@ def fs_list_cmd(
     show_all: bool = typer.Option(False, "--all", "-a", help="Include hidden files"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """
-    List contents of a directory.
-    """
+    """List contents of a directory."""
     result = list_directory(path=path, show_all=show_all)
 
     if not result.success:
-        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        console.print(f"[red]Error:[/red] {result.error}")
         raise typer.Exit(code=1)
 
     if json_output:
-        import json
         print(json.dumps(result.output, indent=2))
     else:
         output = result.output
@@ -107,30 +226,24 @@ def fs_write_cmd(
     force: bool = typer.Option(False, "--force", "-y", help="Skip approval prompt"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """
-    Write content to a file (requires approval).
-    """
-    # Get content from either --content or --from-file
+    """Write content to a file (requires approval)."""
     if content is None and content_file is None:
-        console.print("[bold red]Error:[/bold red] Must provide --content or --from-file")
+        console.print("[red]Error:[/red] Must provide --content or --from-file")
         raise typer.Exit(code=1)
 
     if content is not None and content_file is not None:
-        console.print("[bold red]Error:[/bold red] Cannot use both --content and --from-file")
+        console.print("[red]Error:[/red] Cannot use both --content and --from-file")
         raise typer.Exit(code=1)
 
     if content_file is not None:
         try:
-            from pathlib import Path
             content = Path(content_file).read_text(encoding="utf-8")
         except Exception as e:
-            console.print(f"[bold red]Error:[/bold red] Cannot read {content_file}: {e}")
+            console.print(f"[red]Error:[/red] Cannot read {content_file}: {e}")
             raise typer.Exit(code=1)
 
-    # Generate preview
     preview = fs_write.preview(path=path, content=content)
 
-    # Show what will happen
     if preview["exists"]:
         action_str = "[yellow]OVERWRITE[/yellow]"
     else:
@@ -142,20 +255,10 @@ def fs_write_cmd(
     console.print(f"\n{action_str} {preview['path']}")
     console.print(f"[dim]{lines} lines, {bytes_count} bytes[/dim]")
 
-    # Show diff for existing files
     if preview["diff"]:
         console.print("\n[bold]Diff:[/bold]")
-        for line in preview["diff"].splitlines():
-            if line.startswith("+") and not line.startswith("+++"):
-                console.print(f"[green]{line}[/green]")
-            elif line.startswith("-") and not line.startswith("---"):
-                console.print(f"[red]{line}[/red]")
-            elif line.startswith("@@"):
-                console.print(f"[cyan]{line}[/cyan]")
-            else:
-                console.print(line)
+        _print_diff(preview["diff"])
     elif not preview["exists"]:
-        # Show content preview for new files
         console.print("\n[bold]Content preview:[/bold]")
         preview_lines = content.splitlines()[:10]
         for i, line in enumerate(preview_lines, 1):
@@ -165,38 +268,26 @@ def fs_write_cmd(
 
     console.print()
 
-    # Dry run stops here
     if dry_run:
         console.print("[dim]Dry run - no changes made[/dim]")
         return
 
-    # Approval gate
     if not force:
-        console.print("[bold yellow]APPROVE_WRITE?[/bold yellow] (yes/no) ", end="")
-        try:
-            response = input().strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            console.print("\n[red]Aborted[/red]")
-            raise typer.Exit(code=1)
-
-        if response not in ("yes", "y"):
+        if not _confirm("APPROVE_WRITE?"):
             console.print("[red]Write cancelled[/red]")
             raise typer.Exit(code=0)
 
-    # Execute write
     result = write_file(path=path, content=content, create_dirs=create_dirs)
 
     if not result.success:
-        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        console.print(f"[red]Error:[/red] {result.error}")
         raise typer.Exit(code=1)
 
     if json_output:
-        import json
         print(json.dumps(result.output, indent=2))
     else:
         output = result.output
         console.print(f"[green]✓[/green] {output['action'].capitalize()} {output['path']}")
-        console.print(f"[dim]{output['lines']} lines, {output['bytes']} bytes[/dim]")
 
 
 @fs_app.command("edit")
@@ -209,71 +300,44 @@ def fs_edit_cmd(
     force: bool = typer.Option(False, "--force", "-y", help="Skip approval prompt"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """
-    Edit a file by replacing text (requires approval).
-    """
-    # Generate preview
+    """Edit a file by replacing text (requires approval)."""
     preview = fs_edit.preview(path=path, old_text=old_text, new_text=new_text, replace_all=replace_all)
 
-    # Check for errors
     if preview["error"]:
-        if "not found" in preview["error"].lower() or "ambiguous" in preview["error"].lower():
-            console.print(f"[bold red]Error:[/bold red] {preview['error']}")
-            if preview["occurrences"] > 1:
-                console.print(f"[dim]Found {preview['occurrences']} occurrences. Use --replace-all or provide more context.[/dim]")
-            raise typer.Exit(code=1)
+        console.print(f"[red]Error:[/red] {preview['error']}")
+        if preview["occurrences"] > 1:
+            console.print(f"[dim]Found {preview['occurrences']} occurrences. Use --replace-all or provide more context.[/dim]")
+        raise typer.Exit(code=1)
 
-    # Show what will happen
     console.print(f"\n[yellow]EDIT[/yellow] {preview['path']}")
     console.print(f"[dim]Replacing {preview['would_replace']} occurrence(s)[/dim]")
 
-    # Show diff
     if preview["diff"]:
         console.print("\n[bold]Diff:[/bold]")
-        for line in preview["diff"].splitlines():
-            if line.startswith("+") and not line.startswith("+++"):
-                console.print(f"[green]{line}[/green]")
-            elif line.startswith("-") and not line.startswith("---"):
-                console.print(f"[red]{line}[/red]")
-            elif line.startswith("@@"):
-                console.print(f"[cyan]{line}[/cyan]")
-            else:
-                console.print(line)
+        _print_diff(preview["diff"])
 
     console.print()
 
-    # Dry run stops here
     if dry_run:
         console.print("[dim]Dry run - no changes made[/dim]")
         return
 
-    # Approval gate
     if not force:
-        console.print("[bold yellow]APPROVE_EDIT?[/bold yellow] (yes/no) ", end="")
-        try:
-            response = input().strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            console.print("\n[red]Aborted[/red]")
-            raise typer.Exit(code=1)
-
-        if response not in ("yes", "y"):
+        if not _confirm("APPROVE_EDIT?"):
             console.print("[red]Edit cancelled[/red]")
             raise typer.Exit(code=0)
 
-    # Execute edit
     result = edit_file(path=path, old_text=old_text, new_text=new_text, replace_all=replace_all)
 
     if not result.success:
-        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        console.print(f"[red]Error:[/red] {result.error}")
         raise typer.Exit(code=1)
 
     if json_output:
-        import json
         print(json.dumps(result.output, indent=2))
     else:
         output = result.output
         console.print(f"[green]✓[/green] Edited {output['path']}")
-        console.print(f"[dim]{output['replacements']} replacement(s) made[/dim]")
 
 
 # --- Git Tools ---
@@ -284,17 +348,14 @@ def git_status_cmd(
     path: str = typer.Argument(".", help="Path to repository"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """
-    Show the working tree status.
-    """
+    """Show the working tree status."""
     result = get_status(path=path)
 
     if not result.success:
-        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        console.print(f"[red]Error:[/red] {result.error}")
         raise typer.Exit(code=1)
 
     if json_output:
-        import json
         print(json.dumps(result.output, indent=2))
     else:
         output = result.output
@@ -328,17 +389,14 @@ def git_diff_cmd(
     stat_only: bool = typer.Option(False, "--stat", help="Show only diffstat"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """
-    Show changes between commits, commit and working tree, etc.
-    """
+    """Show changes between commits, commit and working tree, etc."""
     result = get_diff(path=path, staged=staged, commit=commit)
 
     if not result.success:
-        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        console.print(f"[red]Error:[/red] {result.error}")
         raise typer.Exit(code=1)
 
     if json_output:
-        import json
         print(json.dumps(result.output, indent=2))
     else:
         output = result.output
@@ -351,18 +409,7 @@ def git_diff_cmd(
         if stat_only:
             console.print(output["stat"])
         else:
-            # Color the diff output
-            for line in output["diff"].splitlines():
-                if line.startswith("+") and not line.startswith("+++"):
-                    console.print(f"[green]{line}[/green]")
-                elif line.startswith("-") and not line.startswith("---"):
-                    console.print(f"[red]{line}[/red]")
-                elif line.startswith("@@"):
-                    console.print(f"[cyan]{line}[/cyan]")
-                elif line.startswith("diff ") or line.startswith("index "):
-                    console.print(f"[bold]{line}[/bold]")
-                else:
-                    console.print(line)
+            _print_diff(output["diff"])
 
 
 @git_app.command("log")
@@ -372,17 +419,14 @@ def git_log_cmd(
     oneline: bool = typer.Option(False, "--oneline", help="Show one line per commit"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """
-    Show commit logs.
-    """
+    """Show commit logs."""
     result = get_log(path=path, count=count, oneline=oneline)
 
     if not result.success:
-        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        console.print(f"[red]Error:[/red] {result.error}")
         raise typer.Exit(code=1)
 
     if json_output:
-        import json
         print(json.dumps(result.output, indent=2))
     else:
         output = result.output
@@ -414,18 +458,14 @@ def git_add_cmd(
     force: bool = typer.Option(False, "--force", "-y", help="Skip approval prompt"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """
-    Stage files for commit (requires approval).
-    """
-    # Generate preview
+    """Stage files for commit (requires approval)."""
     preview = git_add.preview(files=files, path=path)
 
     if preview["errors"]:
         for error in preview["errors"]:
-            console.print(f"[bold red]Error:[/bold red] {error}")
+            console.print(f"[red]Error:[/red] {error}")
         raise typer.Exit(code=1)
 
-    # Show what will be staged
     console.print(f"\n[yellow]STAGE[/yellow] {len(preview['would_stage'])} file(s)")
     for f in preview["would_stage"][:20]:
         console.print(f"  [green]+[/green] {f}")
@@ -434,33 +474,22 @@ def git_add_cmd(
 
     console.print()
 
-    # Dry run stops here
     if dry_run:
         console.print("[dim]Dry run - no changes made[/dim]")
         return
 
-    # Approval gate
     if not force:
-        console.print("[bold yellow]APPROVE_ADD?[/bold yellow] (yes/no) ", end="")
-        try:
-            response = input().strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            console.print("\n[red]Aborted[/red]")
-            raise typer.Exit(code=1)
-
-        if response not in ("yes", "y"):
+        if not _confirm("APPROVE_ADD?"):
             console.print("[red]Add cancelled[/red]")
             raise typer.Exit(code=0)
 
-    # Execute add
     result = stage_files(files=files, path=path)
 
     if not result.success:
-        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        console.print(f"[red]Error:[/red] {result.error}")
         raise typer.Exit(code=1)
 
     if json_output:
-        import json
         print(json.dumps(result.output, indent=2))
     else:
         output = result.output
@@ -475,17 +504,13 @@ def git_commit_cmd(
     force: bool = typer.Option(False, "--force", "-y", help="Skip approval prompt"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """
-    Create a commit with staged changes (requires approval).
-    """
-    # Generate preview
+    """Create a commit with staged changes (requires approval)."""
     preview = git_commit.preview(message=message, path=path)
 
     if preview["error"]:
-        console.print(f"[bold red]Error:[/bold red] {preview['error']}")
+        console.print(f"[red]Error:[/red] {preview['error']}")
         raise typer.Exit(code=1)
 
-    # Show what will be committed
     console.print(f"\n[yellow]COMMIT[/yellow] {len(preview['staged_files'])} file(s)")
     console.print(f"[bold]Message:[/bold] {message}")
     console.print()
@@ -497,137 +522,154 @@ def git_commit_cmd(
     if len(preview["staged_files"]) > 20:
         console.print(f"  [dim]... and {len(preview['staged_files']) - 20} more files[/dim]")
 
-    # Show diff preview
     if preview["staged_diff"]:
         console.print("\n[bold]Diff preview:[/bold]")
         diff_lines = preview["staged_diff"].splitlines()[:30]
-        for line in diff_lines:
-            if line.startswith("+") and not line.startswith("+++"):
-                console.print(f"[green]{line}[/green]")
-            elif line.startswith("-") and not line.startswith("---"):
-                console.print(f"[red]{line}[/red]")
-            elif line.startswith("@@"):
-                console.print(f"[cyan]{line}[/cyan]")
-            else:
-                console.print(line)
+        _print_diff("\n".join(diff_lines))
         if len(preview["staged_diff"].splitlines()) > 30:
             console.print(f"[dim]... diff truncated ({len(preview['staged_diff'].splitlines())} total lines)[/dim]")
 
     console.print()
 
-    # Dry run stops here
     if dry_run:
         console.print("[dim]Dry run - no changes made[/dim]")
         return
 
-    # Approval gate
     if not force:
-        console.print("[bold yellow]APPROVE_COMMIT?[/bold yellow] (yes/no) ", end="")
-        try:
-            response = input().strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            console.print("\n[red]Aborted[/red]")
-            raise typer.Exit(code=1)
-
-        if response not in ("yes", "y"):
+        if not _confirm("APPROVE_COMMIT?"):
             console.print("[red]Commit cancelled[/red]")
             raise typer.Exit(code=0)
 
-    # Execute commit
     result = create_commit(message=message, path=path)
 
     if not result.success:
-        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        console.print(f"[red]Error:[/red] {result.error}")
         raise typer.Exit(code=1)
 
     if json_output:
-        import json
         print(json.dumps(result.output, indent=2))
     else:
         output = result.output
         console.print(f"[green]✓[/green] Created commit [yellow]{output['short_hash']}[/yellow]")
-        console.print(f"[dim]{output['files_committed']} file(s) committed[/dim]")
 
 
-@app.command()
-def ping():
-    """
-    Ping Ollama and list available models.
-    """
-    base = get_base_url()
-    models = list_models(base)
-
-    table = Table(title=f"Ollama @ {base}")
-    table.add_column("Model")
-    for m in models:
-        table.add_row(m)
-
-    console.print(table)
+# --- Shell Tools ---
 
 
-@app.command()
+@shell_app.command("exec")
+def shell_exec_cmd(
+    command: str = typer.Argument(..., help="Command to execute"),
+    cwd: str = typer.Option(None, "--cwd", "-C", help="Working directory"),
+    timeout: int = typer.Option(30, "--timeout", "-t", help="Timeout in seconds"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be executed"),
+    force: bool = typer.Option(False, "--force", "-y", help="Skip approval prompt"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Execute a shell command (requires approval)."""
+    preview = shell_exec.preview(command=command, cwd=cwd, timeout=timeout)
+
+    if preview["blocked"]:
+        console.print(f"[red]Blocked:[/red] {preview['block_reason']}")
+        raise typer.Exit(code=1)
+
+    danger_str = " [red]⚠ DANGEROUS[/red]" if preview["dangerous"] else ""
+    console.print(f"\n[yellow]EXECUTE[/yellow]{danger_str}")
+    console.print(f"[bold]Command:[/bold] {preview['command']}")
+    console.print(f"[dim]Working directory: {preview['cwd']}[/dim]")
+
+    if preview["dangerous_patterns"]:
+        console.print(f"[red]Dangerous patterns: {', '.join(preview['dangerous_patterns'])}[/red]")
+
+    console.print()
+
+    if dry_run:
+        console.print("[dim]Dry run - no changes made[/dim]")
+        return
+
+    if not force:
+        if not _confirm("APPROVE_EXEC?"):
+            console.print("[red]Execution cancelled[/red]")
+            raise typer.Exit(code=0)
+
+    result = run_command(command=command, cwd=cwd, timeout=timeout)
+
+    if not result.success:
+        console.print(f"[red]Error:[/red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        print(json.dumps(result.output, indent=2))
+    else:
+        output = result.output
+        if output["exit_code"] == 0:
+            console.print(f"[green]✓[/green] Command succeeded")
+        else:
+            console.print(f"[yellow]Exit code: {output['exit_code']}[/yellow]")
+
+        if output["stdout"]:
+            console.print("\n[bold]Output:[/bold]")
+            console.print(output["stdout"])
+
+        if output["stderr"]:
+            console.print("\n[bold red]Stderr:[/bold red]")
+            console.print(output["stderr"])
+
+
+# --- Helper Functions ---
+
+
+def _print_diff(diff: str) -> None:
+    """Print a colored diff."""
+    for line in diff.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            console.print(f"[green]{line}[/green]")
+        elif line.startswith("-") and not line.startswith("---"):
+            console.print(f"[red]{line}[/red]")
+        elif line.startswith("@@"):
+            console.print(f"[cyan]{line}[/cyan]")
+        elif line.startswith("diff ") or line.startswith("index "):
+            console.print(f"[bold]{line}[/bold]")
+        else:
+            console.print(line)
+
+
+def _confirm(prompt: str) -> bool:
+    """Ask for confirmation."""
+    console.print(f"[bold yellow]{prompt}[/bold yellow] (yes/no) ", end="")
+    try:
+        response = input().strip().lower()
+        return response in ("yes", "y")
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[red]Aborted[/red]")
+        return False
+
+
+# Legacy commands for backward compatibility
+
+
+@app.command(hidden=True)
 def where():
-    """
-    Show current configuration.
-    """
-    console.print(f"OLLAMA_BASE_URL={os.getenv('OLLAMA_BASE_URL', '')}")
-    console.print(f"OLLAMA_MODEL={os.getenv('OLLAMA_MODEL', '')}")
+    """Show current configuration (deprecated: use 'config')."""
+    config()
 
 
-@app.command()
+@app.command(hidden=True)
 def chat_once(prompt: str):
-    """
-    One-shot chat with the local model.
-    """
+    """One-shot chat with the local model (deprecated)."""
+    import time
+    from .ollama import generate
+
     start = time.perf_counter()
     with console.status("[bold cyan]Thinking...[/bold cyan]", spinner="dots"):
         response = generate(prompt)
     dur = time.perf_counter() - start
 
-    console.print("\n[bold green]Model:[/bold green]")
+    console.print("\n[bold green]Response:[/bold green]")
     console.print(response)
     console.print(f"[dim]({dur:.2f}s)[/dim]")
 
 
-@app.command()
+@app.command(hidden=True)
 def repl():
-    """
-    Interactive chat loop with memory.
-    Type 'exit' or 'quit' to leave.
-    """
-    console.print("[bold cyan]roura-agent REPL[/bold cyan] (type 'exit' to quit)\n")
-
-    messages = [
-        {
-            "role": "system",
-            "content": "You are roura-agent, a local coding assistant similar to Claude Code. Be concise, precise, and helpful.",
-        }
-    ]
-
-    while True:
-        try:
-            prompt = input("> ")
-        except (EOFError, KeyboardInterrupt):
-            console.print("\nExiting.")
-            break
-
-        if prompt.strip().lower() in {"exit", "quit"}:
-            console.print("Goodbye.")
-            break
-
-        if not prompt.strip():
-            continue
-
-        messages.append({"role": "user", "content": prompt})
-
-        start = time.perf_counter()
-        try:
-            with console.status("[bold cyan]Thinking...[/bold cyan]", spinner="dots"):
-                response = chat(messages)
-            dur = time.perf_counter() - start
-
-            messages.append({"role": "assistant", "content": response})
-            console.print(f"\n[bold green]Model:[/bold green]\n{response}")
-            console.print(f"[dim]({dur:.2f}s)[/dim]\n")
-        except Exception as e:
-            console.print(f"[bold red]Error:[/bold red] {e}")
+    """Interactive chat loop (deprecated: just run 'roura-agent')."""
+    _run_agent()

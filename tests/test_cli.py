@@ -23,15 +23,26 @@ class TestCLIHelp:
         assert result.exit_code == 0
         assert "doctor" in result.output
         assert "ping" in result.output
-        assert "where" in result.output
-        assert "chat-once" in result.output
-        assert "repl" in result.output
+        assert "tools" in result.output
+        assert "config" in result.output
+        assert "fs" in result.output
+        assert "git" in result.output
+        assert "shell" in result.output
 
-    def test_no_args_shows_help(self):
-        """Should show help when invoked without arguments."""
-        result = runner.invoke(app, [])
-        assert result.exit_code == 0
-        assert "Usage:" in result.output
+    def test_no_args_launches_agent(self, monkeypatch):
+        """Should launch agent when invoked without arguments."""
+        # Set required env vars
+        monkeypatch.setenv("OLLAMA_MODEL", "test-model")
+        monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+        # Mock the agent to avoid actually running it
+        with patch("roura_agent.agent.loop.AgentLoop") as mock_agent:
+            mock_instance = MagicMock()
+            mock_agent.return_value = mock_instance
+
+            result = runner.invoke(app, [], input="exit\n")
+            # Should show logo
+            assert "ROURA" in result.output or "roura" in result.output.lower()
 
 
 class TestDoctorCommand:
@@ -82,27 +93,29 @@ class TestDoctorCommand:
         assert "[" in result.output  # JSON array start
 
 
-class TestWhereCommand:
-    """Tests for the where command."""
+class TestConfigCommand:
+    """Tests for the config command."""
 
-    def test_where_shows_env_vars(self, monkeypatch):
+    def test_config_shows_env_vars(self, monkeypatch):
         """Should display environment variable values."""
         monkeypatch.setenv("OLLAMA_BASE_URL", "http://test:1234")
         monkeypatch.setenv("OLLAMA_MODEL", "test-model")
 
-        result = runner.invoke(app, ["where"])
+        result = runner.invoke(app, ["config"])
         assert result.exit_code == 0
         assert "OLLAMA_BASE_URL" in result.output
         assert "OLLAMA_MODEL" in result.output
+        assert "test:1234" in result.output
+        assert "test-model" in result.output
 
-    def test_where_shows_empty_when_not_set(self, monkeypatch):
-        """Should show empty values when env vars not set."""
+    def test_config_shows_not_set_when_empty(self, monkeypatch):
+        """Should show 'not set' when env vars not set."""
         monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
         monkeypatch.delenv("OLLAMA_MODEL", raising=False)
 
-        result = runner.invoke(app, ["where"])
+        result = runner.invoke(app, ["config"])
         assert result.exit_code == 0
-        assert "OLLAMA_BASE_URL=" in result.output
+        assert "not set" in result.output
 
 
 class TestPingCommand:
@@ -131,21 +144,27 @@ class TestPingCommand:
         assert result.exit_code == 0
 
 
-class TestChatOnceCommand:
-    """Tests for the chat-once command."""
+class TestToolsCommand:
+    """Tests for the tools command."""
 
-    @patch("roura_agent.cli.generate")
-    def test_chat_once_sends_prompt(self, mock_generate):
-        """Should send prompt to LLM and display response."""
-        mock_generate.return_value = "Hello, world!"
-
-        result = runner.invoke(app, ["chat-once", "Say hello"])
+    def test_tools_lists_all_tools(self):
+        """Should list all registered tools."""
+        result = runner.invoke(app, ["tools"])
         assert result.exit_code == 0
-        assert "Hello, world!" in result.output
-        mock_generate.assert_called_once_with("Say hello")
+        assert "fs.read" in result.output
+        assert "fs.write" in result.output
+        assert "git.status" in result.output
+        assert "shell.exec" in result.output
 
-    def test_chat_once_requires_prompt(self):
-        """Should require a prompt argument."""
-        result = runner.invoke(app, ["chat-once"])
-        assert result.exit_code != 0
-        assert "Missing argument" in result.output
+
+class TestLegacyCommands:
+    """Tests for deprecated/legacy commands."""
+
+    def test_where_still_works(self, monkeypatch):
+        """The where command should still work (redirects to config)."""
+        monkeypatch.setenv("OLLAMA_BASE_URL", "http://test:1234")
+
+        result = runner.invoke(app, ["where"])
+        assert result.exit_code == 0
+        # Should show config table
+        assert "OLLAMA_BASE_URL" in result.output

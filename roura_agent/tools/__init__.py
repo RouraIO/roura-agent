@@ -8,6 +8,16 @@ from .git import (
     git_status, git_diff, git_log, git_add, git_commit,
     get_status, get_diff, get_log, stage_files, create_commit,
 )
+from .shell import shell_exec, shell_background, run_command, run_background
+from .github import (
+    github_pr_list, github_pr_view, github_pr_create,
+    github_issue_list, github_issue_view, github_issue_create,
+    github_repo_view,
+)
+from .jira import (
+    jira_search, jira_issue, jira_create,
+    jira_transition, jira_comment, jira_my_issues,
+)
 
 __all__ = [
     # Base
@@ -41,4 +51,9 @@ __all__ = [
     "get_log",
     "stage_files",
     "create_commit",
+    # Shell
+    "shell_exec",
+    "shell_background",
+    "run_command",
+    "run_background",
 ]
