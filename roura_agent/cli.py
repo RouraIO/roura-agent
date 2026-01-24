@@ -8,7 +8,7 @@ from rich.table import Table
 
 from .ollama import list_models, get_base_url, generate, chat
 from .tools.doctor import run_all_checks, format_results, has_critical_failures
-from .tools.fs import read_file, list_directory, write_file, fs_write
+from .tools.fs import read_file, list_directory, write_file, edit_file, fs_write, fs_edit
 
 app = typer.Typer(no_args_is_help=True)
 fs_app = typer.Typer(help="Filesystem tools")
@@ -194,6 +194,83 @@ def fs_write_cmd(
         output = result.output
         console.print(f"[green]✓[/green] {output['action'].capitalize()} {output['path']}")
         console.print(f"[dim]{output['lines']} lines, {output['bytes']} bytes[/dim]")
+
+
+@fs_app.command("edit")
+def fs_edit_cmd(
+    path: str = typer.Argument(..., help="Path to the file to edit"),
+    old_text: str = typer.Option(..., "--old", "-o", help="Text to search for"),
+    new_text: str = typer.Option(..., "--new", "-n", help="Text to replace with"),
+    replace_all: bool = typer.Option(False, "--replace-all", "-a", help="Replace all occurrences"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be changed without changing"),
+    force: bool = typer.Option(False, "--force", "-y", help="Skip approval prompt"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """
+    Edit a file by replacing text (requires approval).
+    """
+    # Generate preview
+    preview = fs_edit.preview(path=path, old_text=old_text, new_text=new_text, replace_all=replace_all)
+
+    # Check for errors
+    if preview["error"]:
+        if "not found" in preview["error"].lower() or "ambiguous" in preview["error"].lower():
+            console.print(f"[bold red]Error:[/bold red] {preview['error']}")
+            if preview["occurrences"] > 1:
+                console.print(f"[dim]Found {preview['occurrences']} occurrences. Use --replace-all or provide more context.[/dim]")
+            raise typer.Exit(code=1)
+
+    # Show what will happen
+    console.print(f"\n[yellow]EDIT[/yellow] {preview['path']}")
+    console.print(f"[dim]Replacing {preview['would_replace']} occurrence(s)[/dim]")
+
+    # Show diff
+    if preview["diff"]:
+        console.print("\n[bold]Diff:[/bold]")
+        for line in preview["diff"].splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                console.print(f"[green]{line}[/green]")
+            elif line.startswith("-") and not line.startswith("---"):
+                console.print(f"[red]{line}[/red]")
+            elif line.startswith("@@"):
+                console.print(f"[cyan]{line}[/cyan]")
+            else:
+                console.print(line)
+
+    console.print()
+
+    # Dry run stops here
+    if dry_run:
+        console.print("[dim]Dry run - no changes made[/dim]")
+        return
+
+    # Approval gate
+    if not force:
+        console.print("[bold yellow]APPROVE_EDIT?[/bold yellow] (yes/no) ", end="")
+        try:
+            response = input().strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[red]Aborted[/red]")
+            raise typer.Exit(code=1)
+
+        if response not in ("yes", "y"):
+            console.print("[red]Edit cancelled[/red]")
+            raise typer.Exit(code=0)
+
+    # Execute edit
+    result = edit_file(path=path, old_text=old_text, new_text=new_text, replace_all=replace_all)
+
+    if not result.success:
+        console.print(f"[bold red]Error:[/bold red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        import json
+        print(json.dumps(result.output, indent=2))
+    else:
+        output = result.output
+        console.print(f"[green]✓[/green] Edited {output['path']}")
+        console.print(f"[dim]{output['replacements']} replacement(s) made[/dim]")
 
 
 @app.command()

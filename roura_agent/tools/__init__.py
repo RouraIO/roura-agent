@@ -3,7 +3,7 @@ Roura Agent Tools - CLI-callable, approval-gated tools.
 """
 from .base import Tool, ToolResult, ToolParam, RiskLevel, ToolRegistry, registry
 from .doctor import run_all_checks, format_results, has_critical_failures
-from .fs import fs_read, fs_list, fs_write, read_file, list_directory, write_file
+from .fs import fs_read, fs_list, fs_write, fs_edit, read_file, list_directory, write_file, edit_file
 
 __all__ = [
     # Base
@@ -21,7 +21,9 @@ __all__ = [
     "fs_read",
     "fs_list",
     "fs_write",
+    "fs_edit",
     "read_file",
     "list_directory",
     "write_file",
+    "edit_file",
 ]

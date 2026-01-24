@@ -547,3 +547,261 @@ class TestFsWriteCLI:
         parsed = json.loads(json_str)
         assert "path" in parsed
         assert "action" in parsed
+
+
+# --- Edit Tool Tests ---
+
+from roura_agent.tools.fs import FsEditTool, fs_edit, edit_file
+
+
+class TestFsEditTool:
+    """Tests for the fs.edit tool."""
+
+    def test_tool_properties(self):
+        """Tool should have correct properties."""
+        assert fs_edit.name == "fs.edit"
+        assert fs_edit.risk_level == RiskLevel.MODERATE
+        assert fs_edit.requires_approval is True
+
+    def test_edit_single_occurrence(self, tmp_path):
+        """Should replace single occurrence."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello world\n")
+
+        result = edit_file(str(test_file), "hello", "goodbye")
+
+        assert result.success is True
+        assert result.output["replacements"] == 1
+        assert test_file.read_text() == "goodbye world\n"
+
+    def test_edit_multiple_with_replace_all(self, tmp_path):
+        """Should replace all occurrences with replace_all=True."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello hello hello\n")
+
+        result = edit_file(str(test_file), "hello", "hi", replace_all=True)
+
+        assert result.success is True
+        assert result.output["replacements"] == 3
+        assert test_file.read_text() == "hi hi hi\n"
+
+    def test_edit_fails_on_ambiguous(self, tmp_path):
+        """Should fail when multiple occurrences and replace_all=False."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello hello\n")
+
+        result = edit_file(str(test_file), "hello", "hi", replace_all=False)
+
+        assert result.success is False
+        assert "2 times" in result.error
+
+    def test_edit_text_not_found(self, tmp_path):
+        """Should fail when text not found."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello world\n")
+
+        result = edit_file(str(test_file), "foo", "bar")
+
+        assert result.success is False
+        assert "not found" in result.error.lower()
+
+    def test_edit_nonexistent_file(self, tmp_path):
+        """Should fail for nonexistent file."""
+        result = edit_file(str(tmp_path / "nope.txt"), "old", "new")
+
+        assert result.success is False
+        assert "not found" in result.error.lower()
+
+    def test_edit_multiline(self, tmp_path):
+        """Should handle multiline replacements."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("line1\nold\nline3\n")
+
+        result = edit_file(str(test_file), "old", "new\nextra")
+
+        assert result.success is True
+        assert test_file.read_text() == "line1\nnew\nextra\nline3\n"
+
+    def test_dry_run_description(self, tmp_path):
+        """Dry run should describe what would happen."""
+        test_file = tmp_path / "test.txt"
+        description = fs_edit.dry_run(str(test_file), "old", "new")
+
+        assert "first occurrence" in description
+        assert "'old'" in description
+        assert "'new'" in description
+
+    def test_dry_run_replace_all(self, tmp_path):
+        """Dry run should mention 'all occurrences' with replace_all."""
+        test_file = tmp_path / "test.txt"
+        description = fs_edit.dry_run(str(test_file), "old", "new", replace_all=True)
+
+        assert "all occurrences" in description
+
+    def test_preview_shows_diff(self, tmp_path):
+        """Preview should show unified diff."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello world\n")
+
+        preview = fs_edit.preview(str(test_file), "hello", "goodbye")
+
+        assert preview["occurrences"] == 1
+        assert preview["would_replace"] == 1
+        assert "-hello world" in preview["diff"]
+        assert "+goodbye world" in preview["diff"]
+
+    def test_preview_ambiguous_error(self, tmp_path):
+        """Preview should report ambiguous matches."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello hello\n")
+
+        preview = fs_edit.preview(str(test_file), "hello", "hi")
+
+        assert preview["occurrences"] == 2
+        assert preview["would_replace"] == 0
+        assert "ambiguous" in preview["error"].lower()
+
+
+class TestFsEditCLI:
+    """Tests for the fs edit CLI command."""
+
+    def test_edit_dry_run(self, tmp_path):
+        """Should show preview without editing in dry-run mode."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello world\n")
+
+        result = runner.invoke(app, [
+            "fs", "edit", str(test_file),
+            "--old", "hello",
+            "--new", "goodbye",
+            "--dry-run"
+        ])
+
+        assert result.exit_code == 0
+        assert "Dry run" in result.output
+        assert test_file.read_text() == "hello world\n"  # Unchanged
+
+    def test_edit_with_force(self, tmp_path):
+        """Should skip approval with --force."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello world\n")
+
+        result = runner.invoke(app, [
+            "fs", "edit", str(test_file),
+            "--old", "hello",
+            "--new", "goodbye",
+            "--force"
+        ])
+
+        assert result.exit_code == 0
+        assert test_file.read_text() == "goodbye world\n"
+
+    def test_edit_shows_diff(self, tmp_path):
+        """Should show diff in output."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello world\n")
+
+        result = runner.invoke(app, [
+            "fs", "edit", str(test_file),
+            "--old", "hello",
+            "--new", "goodbye",
+            "--dry-run"
+        ])
+
+        assert result.exit_code == 0
+        assert "Diff" in result.output
+
+    def test_edit_approval_cancelled(self, tmp_path):
+        """Should cancel edit when user says no."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello world\n")
+
+        result = runner.invoke(app, [
+            "fs", "edit", str(test_file),
+            "--old", "hello",
+            "--new", "goodbye"
+        ], input="no\n")
+
+        assert result.exit_code == 0
+        assert "cancelled" in result.output.lower()
+        assert test_file.read_text() == "hello world\n"  # Unchanged
+
+    def test_edit_approval_accepted(self, tmp_path):
+        """Should edit when user says yes."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello world\n")
+
+        result = runner.invoke(app, [
+            "fs", "edit", str(test_file),
+            "--old", "hello",
+            "--new", "goodbye"
+        ], input="yes\n")
+
+        assert result.exit_code == 0
+        assert test_file.read_text() == "goodbye world\n"
+
+    def test_edit_replace_all_flag(self, tmp_path):
+        """Should replace all with --replace-all."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello hello hello\n")
+
+        result = runner.invoke(app, [
+            "fs", "edit", str(test_file),
+            "--old", "hello",
+            "--new", "hi",
+            "--replace-all",
+            "--force"
+        ])
+
+        assert result.exit_code == 0
+        assert test_file.read_text() == "hi hi hi\n"
+
+    def test_edit_ambiguous_error(self, tmp_path):
+        """Should error on ambiguous match without --replace-all."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello hello\n")
+
+        result = runner.invoke(app, [
+            "fs", "edit", str(test_file),
+            "--old", "hello",
+            "--new", "hi"
+        ])
+
+        assert result.exit_code == 1
+        assert "ambiguous" in result.output.lower() or "2" in result.output
+
+    def test_edit_text_not_found_error(self, tmp_path):
+        """Should error when text not found."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello world\n")
+
+        result = runner.invoke(app, [
+            "fs", "edit", str(test_file),
+            "--old", "foo",
+            "--new", "bar"
+        ])
+
+        assert result.exit_code == 1
+        assert "not found" in result.output.lower() or "Error" in result.output
+
+    def test_edit_json_output(self, tmp_path):
+        """Should output JSON with --json flag."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello world\n")
+
+        result = runner.invoke(app, [
+            "fs", "edit", str(test_file),
+            "--old", "hello",
+            "--new", "goodbye",
+            "--force",
+            "--json"
+        ])
+
+        assert result.exit_code == 0
+        output = result.output
+        json_start = output.rfind("{")
+        json_end = output.rfind("}") + 1
+        json_str = output[json_start:json_end]
+        parsed = json.loads(json_str)
+        assert "path" in parsed
+        assert "replacements" in parsed

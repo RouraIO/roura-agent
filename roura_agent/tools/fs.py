@@ -307,15 +307,198 @@ class FsWriteTool(Tool):
         return preview
 
 
+@dataclass
+class FsEditTool(Tool):
+    """Edit a file via search/replace."""
+
+    name: str = "fs.edit"
+    description: str = "Edit a file by replacing text (search/replace)"
+    risk_level: RiskLevel = RiskLevel.MODERATE
+    parameters: list[ToolParam] = field(default_factory=lambda: [
+        ToolParam("path", str, "Path to the file to edit", required=True),
+        ToolParam("old_text", str, "Text to search for", required=True),
+        ToolParam("new_text", str, "Text to replace with", required=True),
+        ToolParam("replace_all", bool, "Replace all occurrences", required=False, default=False),
+    ])
+
+    def execute(
+        self,
+        path: str,
+        old_text: str,
+        new_text: str,
+        replace_all: bool = False,
+    ) -> ToolResult:
+        """Edit file by replacing text."""
+        try:
+            file_path = Path(path).resolve()
+
+            if not file_path.exists():
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"File not found: {path}",
+                )
+
+            if not file_path.is_file():
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"Not a file: {path}",
+                )
+
+            # Read current content
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+
+            # Check if old_text exists
+            count = content.count(old_text)
+            if count == 0:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"Text not found in file: {repr(old_text[:50])}{'...' if len(old_text) > 50 else ''}",
+                )
+
+            # Check for ambiguity (multiple matches when replace_all=False)
+            if count > 1 and not replace_all:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"Text found {count} times. Use --replace-all to replace all occurrences, or provide more context to make it unique.",
+                )
+
+            # Perform replacement
+            if replace_all:
+                new_content = content.replace(old_text, new_text)
+                replacements = count
+            else:
+                new_content = content.replace(old_text, new_text, 1)
+                replacements = 1
+
+            # Write back
+            file_path.write_text(new_content, encoding="utf-8")
+
+            output = {
+                "path": str(file_path),
+                "replacements": replacements,
+                "old_text_preview": old_text[:100] + ("..." if len(old_text) > 100 else ""),
+                "new_text_preview": new_text[:100] + ("..." if len(new_text) > 100 else ""),
+            }
+
+            return ToolResult(success=True, output=output)
+
+        except PermissionError:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"Permission denied: {path}",
+            )
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"Error editing file: {e}",
+            )
+
+    def dry_run(
+        self,
+        path: str,
+        old_text: str,
+        new_text: str,
+        replace_all: bool = False,
+    ) -> str:
+        """Describe what would be edited."""
+        file_path = Path(path).resolve()
+        mode = "all occurrences" if replace_all else "first occurrence"
+        old_preview = old_text[:30] + ("..." if len(old_text) > 30 else "")
+        new_preview = new_text[:30] + ("..." if len(new_text) > 30 else "")
+        return f"Would replace {mode} of {repr(old_preview)} with {repr(new_preview)} in {file_path}"
+
+    def preview(
+        self,
+        path: str,
+        old_text: str,
+        new_text: str,
+        replace_all: bool = False,
+    ) -> dict:
+        """Generate a preview of the edit operation."""
+        file_path = Path(path).resolve()
+
+        preview = {
+            "path": str(file_path),
+            "exists": file_path.exists(),
+            "old_text": old_text,
+            "new_text": new_text,
+            "occurrences": 0,
+            "would_replace": 0,
+            "error": None,
+            "diff": None,
+            "old_content": None,
+            "new_content": None,
+        }
+
+        if not file_path.exists():
+            preview["error"] = f"File not found: {path}"
+            return preview
+
+        if not file_path.is_file():
+            preview["error"] = f"Not a file: {path}"
+            return preview
+
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+            preview["old_content"] = content
+
+            count = content.count(old_text)
+            preview["occurrences"] = count
+
+            if count == 0:
+                preview["error"] = "Text not found"
+                return preview
+
+            if count > 1 and not replace_all:
+                preview["error"] = f"Text found {count} times (ambiguous)"
+                preview["would_replace"] = 0
+            else:
+                preview["would_replace"] = count if replace_all else 1
+
+            # Generate new content for diff
+            if replace_all:
+                new_content = content.replace(old_text, new_text)
+            else:
+                new_content = content.replace(old_text, new_text, 1)
+
+            preview["new_content"] = new_content
+
+            # Generate diff
+            import difflib
+            old_lines = content.splitlines(keepends=True)
+            new_lines = new_content.splitlines(keepends=True)
+
+            diff = list(difflib.unified_diff(
+                old_lines,
+                new_lines,
+                fromfile=f"a/{file_path.name}",
+                tofile=f"b/{file_path.name}",
+            ))
+            preview["diff"] = "".join(diff)
+
+        except Exception as e:
+            preview["error"] = str(e)
+
+        return preview
+
+
 # Create tool instances
 fs_read = FsReadTool()
 fs_list = FsListTool()
 fs_write = FsWriteTool()
+fs_edit = FsEditTool()
 
 # Register tools
 registry.register(fs_read)
 registry.register(fs_list)
 registry.register(fs_write)
+registry.register(fs_edit)
 
 
 def read_file(path: str, offset: int = 1, lines: int = 0) -> ToolResult:
@@ -331,3 +514,8 @@ def list_directory(path: str, show_all: bool = False) -> ToolResult:
 def write_file(path: str, content: str, create_dirs: bool = False) -> ToolResult:
     """Convenience function to write a file."""
     return fs_write.execute(path=path, content=content, create_dirs=create_dirs)
+
+
+def edit_file(path: str, old_text: str, new_text: str, replace_all: bool = False) -> ToolResult:
+    """Convenience function to edit a file."""
+    return fs_edit.execute(path=path, old_text=old_text, new_text=new_text, replace_all=replace_all)
