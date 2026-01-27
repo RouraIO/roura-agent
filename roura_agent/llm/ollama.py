@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import queue
 from typing import Any, Generator, Optional
 
 import httpx
@@ -128,7 +130,7 @@ class OllamaProvider(LLMProvider):
 
         Yields partial responses as tokens arrive.
         Tool calls are accumulated and included in the final response.
-        Yields periodic heartbeats during waiting to allow ESC interrupt checks.
+        Uses threading to allow ESC interrupt even during initial connection.
         """
         payload: dict[str, Any] = {
             "model": self._model,
@@ -139,94 +141,121 @@ class OllamaProvider(LLMProvider):
         if tools and self.supports_tools():
             payload["tools"] = tools
 
-        # Accumulators for streaming
-        content_buffer: list[str] = []
-        tool_calls_buffer: dict[int, dict] = {}
+        # Queue for thread communication
+        data_queue: queue.Queue = queue.Queue()
 
-        # Yield initial "thinking" response so caller can start ESC checking
-        yield LLMResponse(content="", done=False)
+        # Flag to signal thread to stop
+        stop_flag = threading.Event()
 
-        try:
-            with httpx.stream(
-                "POST",
-                f"{self._base_url}/api/chat",
-                json=payload,
-                timeout=self._timeout,
-            ) as response:
-                response.raise_for_status()
+        def stream_worker():
+            """Background worker that streams from Ollama."""
+            content_buffer: list[str] = []
+            tool_calls_buffer: dict[int, dict] = {}
 
-                line_buffer = ""
-                # Use iter_bytes for more granular streaming with periodic yields
-                for chunk in response.iter_bytes(chunk_size=256):
-                    if chunk:
-                        line_buffer += chunk.decode("utf-8", errors="replace")
+            try:
+                with httpx.stream(
+                    "POST",
+                    f"{self._base_url}/api/chat",
+                    json=payload,
+                    timeout=self._timeout,
+                ) as response:
+                    response.raise_for_status()
 
-                    # Process complete lines
-                    while "\n" in line_buffer:
-                        line, line_buffer = line_buffer.split("\n", 1)
-                        line = line.strip()
-                        if not line:
-                            continue
-
-                        try:
-                            data = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-
-                        message = data.get("message", {})
-
-                        # Accumulate content
-                        if content := message.get("content"):
-                            content_buffer.append(content)
-
-                        # Accumulate tool calls (may be streamed incrementally)
-                        if raw_tool_calls := message.get("tool_calls"):
-                            self._accumulate_tool_calls(raw_tool_calls, tool_calls_buffer)
-
-                        # Yield partial response for display
-                        yield LLMResponse(
-                            content="".join(content_buffer),
-                            done=data.get("done", False),
-                        )
-
-                        if data.get("done"):
-                            # Build final tool calls and exit
-                            final_tool_calls = self._build_tool_calls(tool_calls_buffer)
-                            yield LLMResponse(
-                                content="".join(content_buffer),
-                                tool_calls=final_tool_calls,
-                                done=True,
-                            )
+                    line_buffer = ""
+                    for chunk in response.iter_bytes(chunk_size=256):
+                        if stop_flag.is_set():
                             return
 
-                    # Yield heartbeat after processing chunk (even if no complete line)
-                    # This allows ESC checking during slow token generation
-                    yield LLMResponse(content="".join(content_buffer), done=False)
+                        if chunk:
+                            line_buffer += chunk.decode("utf-8", errors="replace")
 
-        except httpx.TimeoutException as e:
-            error = RouraError(ErrorCode.OLLAMA_TIMEOUT, cause=e)
-            yield LLMResponse(error=error.message, done=True)
-            return
-        except httpx.ConnectError as e:
-            error = RouraError(ErrorCode.OLLAMA_CONNECTION_FAILED, cause=e)
-            yield LLMResponse(error=error.message, done=True)
-            return
-        except httpx.HTTPError as e:
-            error = handle_connection_error(e, self._base_url)
-            yield LLMResponse(error=error.message, done=True)
-            return
-        except Exception as e:
-            error = RouraError(ErrorCode.OLLAMA_STREAMING_FAILED, message=str(e), cause=e)
-            yield LLMResponse(error=error.message, done=True)
-            return
+                        # Process complete lines
+                        while "\n" in line_buffer:
+                            if stop_flag.is_set():
+                                return
 
-        # Build final tool calls (fallback if stream ended without done=True)
-        final_tool_calls = self._build_tool_calls(tool_calls_buffer)
-        yield LLMResponse(
-            content="".join(content_buffer),
-            tool_calls=final_tool_calls,
-            done=True,
-        )
+                            line, line_buffer = line_buffer.split("\n", 1)
+                            line = line.strip()
+                            if not line:
+                                continue
+
+                            try:
+                                data = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+
+                            message = data.get("message", {})
+
+                            # Accumulate content
+                            if content := message.get("content"):
+                                content_buffer.append(content)
+
+                            # Accumulate tool calls
+                            if raw_tool_calls := message.get("tool_calls"):
+                                self._accumulate_tool_calls(raw_tool_calls, tool_calls_buffer)
+
+                            # Put response in queue
+                            data_queue.put(LLMResponse(
+                                content="".join(content_buffer),
+                                done=data.get("done", False),
+                            ))
+
+                            if data.get("done"):
+                                # Final response with tool calls
+                                final_tool_calls = self._build_tool_calls(tool_calls_buffer)
+                                data_queue.put(LLMResponse(
+                                    content="".join(content_buffer),
+                                    tool_calls=final_tool_calls,
+                                    done=True,
+                                ))
+                                return
+
+                # Stream ended without done=True
+                final_tool_calls = self._build_tool_calls(tool_calls_buffer)
+                data_queue.put(LLMResponse(
+                    content="".join(content_buffer),
+                    tool_calls=final_tool_calls,
+                    done=True,
+                ))
+
+            except httpx.TimeoutException as e:
+                error = RouraError(ErrorCode.OLLAMA_TIMEOUT, cause=e)
+                data_queue.put(LLMResponse(error=error.message, done=True))
+            except httpx.ConnectError as e:
+                error = RouraError(ErrorCode.OLLAMA_CONNECTION_FAILED, cause=e)
+                data_queue.put(LLMResponse(error=error.message, done=True))
+            except httpx.HTTPError as e:
+                error = handle_connection_error(e, self._base_url)
+                data_queue.put(LLMResponse(error=error.message, done=True))
+            except Exception as e:
+                if not stop_flag.is_set():
+                    error = RouraError(ErrorCode.OLLAMA_STREAMING_FAILED, message=str(e), cause=e)
+                    data_queue.put(LLMResponse(error=error.message, done=True))
+
+        # Start background thread
+        thread = threading.Thread(target=stream_worker, daemon=True)
+        thread.start()
+
+        # Yield responses from queue, with periodic heartbeats for ESC checking
+        try:
+            while True:
+                try:
+                    # Wait for data with short timeout to allow ESC checking
+                    response = data_queue.get(timeout=0.1)
+                    yield response
+                    if response.done:
+                        return
+                except queue.Empty:
+                    # No data yet - yield heartbeat for ESC checking
+                    yield LLMResponse(content="", done=False)
+
+                    # Check if thread is still alive
+                    if not thread.is_alive():
+                        # Thread finished but queue is empty - should not happen normally
+                        return
+        finally:
+            # Signal thread to stop on cleanup
+            stop_flag.set()
 
     def _accumulate_tool_calls(
         self,
