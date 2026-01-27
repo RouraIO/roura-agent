@@ -6,12 +6,11 @@ WORKDIR /app
 # Install dependencies
 RUN pip install --no-cache-dir flask gunicorn
 
-# Copy webhook scripts
-COPY scripts/payment_webhook.py .
+# Copy webhook server (self-contained)
 COPY scripts/webhook_server.py .
 
-# Expose port
-EXPOSE 8000
+# Railway sets PORT env var
+ENV PORT=8000
 
-# Run with gunicorn for production
-CMD ["gunicorn", "webhook_server:app", "-b", "0.0.0.0:8000", "--workers", "2", "--access-logfile", "-", "--timeout", "120"]
+# Run with gunicorn - use $PORT for Railway compatibility
+CMD gunicorn webhook_server:app -b 0.0.0.0:$PORT --workers 2 --access-logfile -
