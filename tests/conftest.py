@@ -8,6 +8,18 @@ import pytest
 from typer.testing import CliRunner
 
 from roura_agent.cli import app
+from roura_agent.safety import reset_session_state, SafetyMode
+
+
+@pytest.fixture(autouse=True)
+def reset_safety_state():
+    """Reset safety state before each test to prevent cross-test pollution."""
+    reset_session_state()
+    SafetyMode.reset()
+    yield
+    # Also reset after test completes
+    reset_session_state()
+    SafetyMode.reset()
 
 
 @pytest.fixture

@@ -89,6 +89,115 @@ class Credentials:
         return cls(**data)
 
 
+# --- Configuration Validation ---
+
+
+class ConfigValidationError(Exception):
+    """Raised when configuration validation fails."""
+
+    def __init__(self, errors: list[str]):
+        self.errors = errors
+        super().__init__(f"Configuration validation failed: {', '.join(errors)}")
+
+
+def validate_url(url: str, name: str) -> list[str]:
+    """Validate a URL format."""
+    errors = []
+    if not url:
+        return errors  # Empty is allowed (not configured)
+
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url)
+        if not parsed.scheme:
+            errors.append(f"{name}: URL must include scheme (http:// or https://)")
+        elif parsed.scheme not in ("http", "https"):
+            errors.append(f"{name}: URL scheme must be http or https, got '{parsed.scheme}'")
+        if not parsed.netloc:
+            errors.append(f"{name}: URL must include host")
+    except Exception as e:
+        errors.append(f"{name}: Invalid URL format: {e}")
+
+    return errors
+
+
+def validate_model_name(model: str) -> list[str]:
+    """Validate an Ollama model name."""
+    errors = []
+    if not model:
+        return errors  # Empty is allowed (not configured)
+
+    # Model names should be alphanumeric with optional : for tags
+    import re
+    if not re.match(r'^[a-zA-Z0-9._-]+(?::[a-zA-Z0-9._-]+)?$', model):
+        errors.append(f"model: Invalid model name format: '{model}'")
+
+    return errors
+
+
+def validate_email(email: str, name: str) -> list[str]:
+    """Validate an email format."""
+    errors = []
+    if not email:
+        return errors  # Empty is allowed (not configured)
+
+    import re
+    if not re.match(r'^[^@]+@[^@]+\.[^@]+$', email):
+        errors.append(f"{name}: Invalid email format: '{email}'")
+
+    return errors
+
+
+def validate_positive_int(value: int, name: str, min_val: int = 1, max_val: int = 1000) -> list[str]:
+    """Validate a positive integer within range."""
+    errors = []
+    if not isinstance(value, int):
+        errors.append(f"{name}: Must be an integer, got {type(value).__name__}")
+    elif value < min_val:
+        errors.append(f"{name}: Must be at least {min_val}, got {value}")
+    elif value > max_val:
+        errors.append(f"{name}: Must be at most {max_val}, got {value}")
+    return errors
+
+
+def validate_config(config: Config) -> list[str]:
+    """
+    Validate configuration values.
+
+    Returns a list of error messages (empty if valid).
+    """
+    errors = []
+
+    # Ollama config
+    errors.extend(validate_url(config.ollama.base_url, "ollama.base_url"))
+    errors.extend(validate_model_name(config.ollama.model))
+
+    # Jira config
+    errors.extend(validate_url(config.jira.url, "jira.url"))
+    errors.extend(validate_email(config.jira.email, "jira.email"))
+
+    # Agent config
+    errors.extend(validate_positive_int(
+        config.agent.max_tool_calls, "agent.max_tool_calls", min_val=1, max_val=50
+    ))
+
+    return errors
+
+
+def validate_and_raise(config: Config) -> None:
+    """Validate configuration and raise if invalid."""
+    errors = validate_config(config)
+    if errors:
+        raise ConfigValidationError(errors)
+
+
+def get_validated_config() -> tuple[Config, Credentials]:
+    """Get effective configuration with validation."""
+    config, creds = get_effective_config()
+    validate_and_raise(config)
+    return config, creds
+
+
 def ensure_config_dir() -> None:
     """Ensure config directory exists with proper permissions."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)

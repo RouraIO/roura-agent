@@ -1,5 +1,7 @@
 """
 Roura Agent Filesystem Tools.
+
+© Roura.io
 """
 from __future__ import annotations
 
@@ -8,6 +10,15 @@ from pathlib import Path
 from typing import Optional
 
 from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
+from ..secrets import check_before_write, format_secret_warning, is_secret_file
+from ..safety import (
+    check_path_allowed,
+    check_modification_allowed,
+    record_modification,
+    is_dry_run,
+    is_readonly,
+    check_write_allowed,
+)
 
 
 @dataclass
@@ -202,6 +213,49 @@ class FsWriteTool(Tool):
         try:
             file_path = Path(path).resolve()
 
+            # SAFETY: Check if writes are allowed (readonly/dry-run mode)
+            write_allowed, write_error = check_write_allowed()
+            if not write_allowed:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=write_error,
+                )
+
+            # SAFETY: Check if path is allowed
+            path_allowed, path_error = check_path_allowed(str(file_path))
+            if not path_allowed:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"BLOCKED: {path_error}",
+                )
+
+            # SAFETY: Check blast radius limits
+            lines_to_write = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+            mod_allowed, mod_error = check_modification_allowed(str(file_path), lines_to_write)
+            if not mod_allowed:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"BLOCKED: {mod_error}",
+                )
+
+            # SECURITY: Check for secrets before writing
+            is_safe, secret_matches = check_before_write(content, str(file_path))
+            if not is_safe:
+                warning = format_secret_warning(secret_matches, str(file_path))
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"BLOCKED: Secrets detected in content.\n\n{warning}",
+                )
+
+            # Warn if writing to a known secrets file
+            if is_secret_file(str(file_path)):
+                # Allow but warn - these files are meant for secrets
+                pass
+
             # Check if parent directory exists
             if not file_path.parent.exists():
                 if create_dirs:
@@ -244,6 +298,9 @@ class FsWriteTool(Tool):
                 "lines": lines_written,
                 "bytes": bytes_written,
             }
+
+            # SAFETY: Record the modification for blast radius tracking
+            record_modification(str(file_path), lines_written)
 
             return ToolResult(success=True, output=output)
 
@@ -332,6 +389,24 @@ class FsEditTool(Tool):
         try:
             file_path = Path(path).resolve()
 
+            # SAFETY: Check if writes are allowed (readonly/dry-run mode)
+            write_allowed, write_error = check_write_allowed()
+            if not write_allowed:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=write_error,
+                )
+
+            # SAFETY: Check if path is allowed
+            path_allowed, path_error = check_path_allowed(str(file_path))
+            if not path_allowed:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"BLOCKED: {path_error}",
+                )
+
             if not file_path.exists():
                 return ToolResult(
                     success=False,
@@ -374,8 +449,35 @@ class FsEditTool(Tool):
                 new_content = content.replace(old_text, new_text, 1)
                 replacements = 1
 
+            # Calculate lines changed for blast radius tracking
+            old_lines = content.count("\n")
+            new_lines = new_content.count("\n")
+            lines_changed = abs(new_lines - old_lines) + replacements  # Approximate LOC change
+
+            # SAFETY: Check blast radius limits
+            mod_allowed, mod_error = check_modification_allowed(str(file_path), lines_changed)
+            if not mod_allowed:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"BLOCKED: {mod_error}",
+                )
+
+            # SECURITY: Check for secrets before writing
+            is_safe, secret_matches = check_before_write(new_content, str(file_path))
+            if not is_safe:
+                warning = format_secret_warning(secret_matches, str(file_path))
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"BLOCKED: Secrets detected in edited content.\n\n{warning}",
+                )
+
             # Write back
             file_path.write_text(new_content, encoding="utf-8")
+
+            # SAFETY: Record the modification for blast radius tracking
+            record_modification(str(file_path), lines_changed)
 
             output = {
                 "path": str(file_path),

@@ -1,5 +1,7 @@
 """
 Roura Agent GitHub Tools - GitHub integration via gh CLI.
+
+© Roura.io
 """
 from __future__ import annotations
 

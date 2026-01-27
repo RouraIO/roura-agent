@@ -1,5 +1,7 @@
 """
 Roura Agent Shell Tool - Safe shell command execution.
+
+© Roura.io
 """
 from __future__ import annotations
 

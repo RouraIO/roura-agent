@@ -1,5 +1,7 @@
 """
 Roura Agent Jira Tools - Jira integration via REST API.
+
+© Roura.io
 """
 from __future__ import annotations
 

@@ -1,3 +1,8 @@
+"""
+Roura Agent Ollama Client - Local LLM integration via Ollama.
+
+© Roura.io
+"""
 from __future__ import annotations
 
 import os

@@ -1,5 +1,7 @@
 """
 Roura Agent Git Tools.
+
+© Roura.io
 """
 from __future__ import annotations
 
@@ -9,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
+from ..secrets import check_before_commit, format_secret_warning
 
 
 def run_git_command(args: list[str], cwd: Optional[str] = None) -> tuple[bool, str, str]:
@@ -451,6 +454,28 @@ class GitCommitTool(Tool):
                 success=False,
                 output=None,
                 error="No staged changes to commit",
+            )
+
+        # SECURITY: Check staged files for secrets before commit
+        staged_files = []
+        for line in staged:
+            # Extract file path from porcelain output (format: "XY filename" or "XY orig -> new")
+            parts = line[3:].strip()
+            if " -> " in parts:
+                parts = parts.split(" -> ")[1]  # Use the new filename
+            file_path = Path(repo_root) / parts
+            if file_path.exists() and file_path.is_file():
+                staged_files.append(str(file_path))
+
+        secrets_found = check_before_commit(staged_files)
+        if secrets_found:
+            warnings = []
+            for file_path, matches in secrets_found.items():
+                warnings.append(format_secret_warning(matches, file_path))
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"BLOCKED: Secrets detected in staged files.\n\n" + "\n\n".join(warnings),
             )
 
         # Run git commit

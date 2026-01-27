@@ -1,5 +1,7 @@
 """
 Roura Agent Tool Base - Foundation for all tools.
+
+© Roura.io
 """
 from __future__ import annotations
 

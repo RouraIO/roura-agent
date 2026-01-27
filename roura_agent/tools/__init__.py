@@ -1,5 +1,7 @@
 """
 Roura Agent Tools - CLI-callable, approval-gated tools.
+
+© Roura.io
 """
 from .base import Tool, ToolResult, ToolParam, RiskLevel, ToolRegistry, registry
 from .doctor import run_all_checks, format_results, has_critical_failures
@@ -18,6 +20,50 @@ from .jira import (
     jira_search, jira_issue, jira_create,
     jira_transition, jira_comment, jira_my_issues,
 )
+from .schema import (
+    tool_to_json_schema,
+    tools_to_json_schema,
+    registry_to_json_schema,
+    get_tool_names,
+    get_tool_descriptions,
+)
+from .glob import glob_tool, find_files
+from .grep import grep_tool, search_files
+from .memory import memory_store, memory_recall, memory_clear, store_note, recall_notes, clear_memory
+from .webfetch import web_fetch, web_search, fetch_webpage
+
+# New Phase 1 tools: Testing, Building, Linting
+from .testing import (
+    TestRunTool,
+    TestFailuresTool,
+    TestLastTool,
+    TestCoverageTool,
+    TestFixTool,
+    TestWatchTool,
+    run_tests,
+    detect_test_framework,
+)
+from .build import (
+    BuildRunTool,
+    BuildErrorsTool,
+    BuildCleanTool,
+    BuildFixTool,
+    BuildWatchTool,
+    run_build,
+    detect_build_system,
+)
+from .lint import (
+    LintRunTool,
+    LintFixTool,
+    FormatRunTool,
+    FormatCheckTool,
+    TypecheckRunTool,
+    TypecheckFixTool,
+    run_lint,
+    detect_linter,
+    detect_formatter,
+    detect_typechecker,
+)
 
 __all__ = [
     # Base
@@ -27,6 +73,12 @@ __all__ = [
     "RiskLevel",
     "ToolRegistry",
     "registry",
+    # Schema
+    "tool_to_json_schema",
+    "tools_to_json_schema",
+    "registry_to_json_schema",
+    "get_tool_names",
+    "get_tool_descriptions",
     # Doctor
     "run_all_checks",
     "format_results",
@@ -56,4 +108,48 @@ __all__ = [
     "shell_background",
     "run_command",
     "run_background",
+    # Glob & Grep
+    "glob_tool",
+    "find_files",
+    "grep_tool",
+    "search_files",
+    # Memory
+    "memory_store",
+    "memory_recall",
+    "memory_clear",
+    "store_note",
+    "recall_notes",
+    "clear_memory",
+    # Web
+    "web_fetch",
+    "web_search",
+    "fetch_webpage",
+    # Testing
+    "TestRunTool",
+    "TestFailuresTool",
+    "TestLastTool",
+    "TestCoverageTool",
+    "TestFixTool",
+    "TestWatchTool",
+    "run_tests",
+    "detect_test_framework",
+    # Build
+    "BuildRunTool",
+    "BuildErrorsTool",
+    "BuildCleanTool",
+    "BuildFixTool",
+    "BuildWatchTool",
+    "run_build",
+    "detect_build_system",
+    # Lint & Format
+    "LintRunTool",
+    "LintFixTool",
+    "FormatRunTool",
+    "FormatCheckTool",
+    "TypecheckRunTool",
+    "TypecheckFixTool",
+    "run_lint",
+    "detect_linter",
+    "detect_formatter",
+    "detect_typechecker",
 ]

@@ -1,5 +1,7 @@
 """
 Roura Agent Planner - Generates and formats execution plans.
+
+© Roura.io
 """
 from __future__ import annotations
 

@@ -27,6 +27,13 @@ from .config import (
     apply_config_to_env, get_effective_config, detect_project,
     Config, Credentials, CONFIG_FILE, CREDENTIALS_FILE,
 )
+from .branding import (
+    LOGO, Colors, Icons, Styles,
+    format_error, format_success, format_warning,
+    format_diff, format_diff_line, get_risk_color,
+)
+from .constants import VERSION
+from .safety import SafetyMode, BlastRadiusLimits
 
 # Import these to ensure tools are registered
 from .tools import github, jira
@@ -40,54 +47,189 @@ app.add_typer(git_app, name="git")
 app.add_typer(shell_app, name="shell")
 console = Console()
 
-# ASCII Art Logo
-LOGO = """
-[cyan]
- ██████╗  ██████╗ ██╗   ██╗██████╗  █████╗
- ██╔══██╗██╔═══██╗██║   ██║██╔══██╗██╔══██╗
- ██████╔╝██║   ██║██║   ██║██████╔╝███████║
- ██╔══██╗██║   ██║██║   ██║██╔══██╗██╔══██║
- ██║  ██║╚██████╔╝╚██████╔╝██║  ██║██║  ██║
- ╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝
-[/cyan][dim]  Local AI Coding Assistant • roura.io[/dim]
-"""
-
 
 @app.callback()
-def main(ctx: typer.Context):
+def main(
+    ctx: typer.Context,
+    provider: str = typer.Option(
+        None,
+        "--provider",
+        "-p",
+        help="LLM provider: ollama, openai, anthropic (auto-detect if not set)",
+        envvar="ROURA_PROVIDER",
+    ),
+    safe_mode: bool = typer.Option(
+        False,
+        "--safe-mode",
+        "-s",
+        help="Disable dangerous tools (shell.exec, etc.)",
+        envvar="ROURA_SAFE_MODE",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        "-n",
+        help="Preview all changes without actually writing files",
+        envvar="ROURA_DRY_RUN",
+    ),
+    readonly: bool = typer.Option(
+        False,
+        "--readonly",
+        "-r",
+        help="Completely disable all file modifications",
+        envvar="ROURA_READONLY",
+    ),
+    allow: list[str] = typer.Option(
+        None,
+        "--allow",
+        "-a",
+        help="Only allow modifications to files matching these globs (can repeat)",
+    ),
+    block: list[str] = typer.Option(
+        None,
+        "--block",
+        "-b",
+        help="Block modifications to files matching these globs (can repeat)",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        "-d",
+        help="Enable debug logging to console",
+    ),
+):
     """
     Roura Agent - Local-first AI coding assistant by Roura.io.
     """
+    from typing import Optional
+
+    # Store options in context for subcommands
+    ctx.ensure_object(dict)
+    ctx.obj["provider"] = provider
+    ctx.obj["safe_mode"] = safe_mode
+    ctx.obj["dry_run"] = dry_run
+    ctx.obj["readonly"] = readonly
+    ctx.obj["allow"] = allow
+    ctx.obj["block"] = block
+    ctx.obj["debug"] = debug
+
+    # Setup logging if debug
+    if debug:
+        from .logging import setup_logging
+        setup_logging(level="DEBUG", log_to_console=True, console_level="DEBUG")
+
+    # Apply safety modes
+    if dry_run:
+        SafetyMode.enable_dry_run()
+    if readonly:
+        SafetyMode.enable_readonly()
+
+    # Apply file pattern limits
+    if allow or block:
+        limits = BlastRadiusLimits(
+            allowlist=allow if allow else None,
+            blocklist=block if block else None,
+        )
+        SafetyMode.set_limits(limits)
+
     # If no command given, launch interactive agent
     if ctx.invoked_subcommand is None:
-        _run_agent()
+        _run_agent(
+            provider=provider,
+            safe_mode=safe_mode,
+            dry_run=dry_run,
+            readonly=readonly,
+            allow=allow,
+            block=block,
+            debug=debug,
+        )
 
 
-def _run_agent():
+def _run_agent(
+    provider: str = None,
+    safe_mode: bool = False,
+    dry_run: bool = False,
+    readonly: bool = False,
+    allow: list[str] = None,
+    block: list[str] = None,
+    debug: bool = False,
+):
     """Launch the interactive agent."""
     from .agent.loop import AgentLoop, AgentConfig as LoopConfig
+    from .onboarding import check_and_run_onboarding
+    from .llm import get_provider, detect_available_providers, ProviderType
+
+    # Check for first-run onboarding
+    if not check_and_run_onboarding(console):
+        return  # Setup incomplete
 
     # Load and apply configuration
     config, creds = get_effective_config()
     apply_config_to_env(config, creds)
 
+    # Display mode indicators
+    modes = []
+    if safe_mode:
+        _enable_safe_mode()
+        modes.append(f"[{Colors.WARNING}]{Icons.LOCK} Safe Mode[/{Colors.WARNING}]")
+    if dry_run:
+        modes.append(f"[{Colors.INFO}]{Icons.INFO} Dry-Run Mode[/{Colors.INFO}]")
+    if readonly:
+        modes.append(f"[{Colors.ERROR}]{Icons.FORBIDDEN} Read-Only Mode[/{Colors.ERROR}]")
+
+    if modes:
+        console.print(" • ".join(modes))
+
+    # Display file pattern restrictions
+    if allow:
+        patterns = ", ".join(allow)
+        console.print(f"[dim]Allowed patterns: {patterns}[/dim]")
+    if block:
+        patterns = ", ".join(block)
+        console.print(f"[dim]Blocked patterns: {patterns}[/dim]")
+
+    if modes or allow or block:
+        console.print()
+
     # Display logo
     console.print(LOGO)
 
-    # Quick health check
-    model = get_model()
-    if not model:
-        console.print("[red]Error:[/red] OLLAMA_MODEL not set")
-        console.print("[dim]Run 'roura-agent setup' to configure, or:[/dim]")
-        console.print("[dim]  export OLLAMA_MODEL=qwen2.5-coder:32b[/dim]")
+    # Determine provider type
+    provider_type = None
+    if provider:
+        provider_map = {
+            "ollama": ProviderType.OLLAMA,
+            "openai": ProviderType.OPENAI,
+            "anthropic": ProviderType.ANTHROPIC,
+        }
+        provider_type = provider_map.get(provider.lower())
+        if not provider_type:
+            console.print(f"[red]Error:[/red] Unknown provider '{provider}'")
+            console.print("[dim]Available: ollama, openai, anthropic[/dim]")
+            raise typer.Exit(1)
+
+    # Get provider instance
+    try:
+        llm_provider = get_provider(provider_type)
+        provider_display = f"{llm_provider.provider_type.value} ({llm_provider.model_name})"
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        console.print("[dim]Run 'roura-agent setup' to configure, or set environment variables:[/dim]")
+        console.print("[dim]  OPENAI_API_KEY=xxx or ANTHROPIC_API_KEY=xxx[/dim]")
+        console.print("[dim]  Or ensure Ollama is running with OLLAMA_MODEL set[/dim]")
         raise typer.Exit(1)
+
+    # Show available providers
+    available = detect_available_providers()
+    available_str = ", ".join(p.value for p in available)
 
     # Detect project
     project = detect_project()
 
     # Show config and project info
-    console.print(f"[dim]Model: {model}[/dim]")
-    console.print(f"[dim]Endpoint: {get_base_url()}[/dim]")
+    console.print(f"[dim]Provider: {provider_display}[/dim]")
+    if len(available) > 1:
+        console.print(f"[dim]Available: {available_str}[/dim]")
     console.print(f"[bold cyan]Project:[/bold cyan] {project.name} [dim]({project.type})[/dim]")
     if project.git_branch:
         console.print(f"[dim]Branch: {project.git_branch} • {len(project.files)} files[/dim]")
@@ -95,13 +237,15 @@ def _run_agent():
 
     # Run agent
     loop_config = LoopConfig(
-        max_tool_calls=3,
-        require_plan_approval=True,
-        require_tool_approval=True,
+        max_tool_calls_per_turn=3,
+        require_approval_moderate=True,
+        require_approval_dangerous=True,
         stream_responses=True,
     )
 
     agent = AgentLoop(console=console, config=loop_config, project=project)
+    if provider_type:
+        agent.set_provider(provider_type)
     agent.run()
 
 
@@ -122,20 +266,14 @@ def doctor(
 def tools():
     """List all available tools."""
     table = Table(title="Available Tools")
-    table.add_column("Tool", style="cyan")
+    table.add_column("Tool", style=Colors.PRIMARY)
     table.add_column("Risk", justify="center")
     table.add_column("Description")
 
     from .tools.base import RiskLevel
 
-    risk_colors = {
-        RiskLevel.SAFE: "green",
-        RiskLevel.MODERATE: "yellow",
-        RiskLevel.DANGEROUS: "red",
-    }
-
     for name, tool in sorted(registry._tools.items()):
-        color = risk_colors.get(tool.risk_level, "white")
+        color = get_risk_color(tool.risk_level.value)
         risk_text = f"[{color}]{tool.risk_level.value}[/{color}]"
         table.add_row(name, risk_text, tool.description)
 
@@ -788,18 +926,9 @@ def shell_exec_cmd(
 
 
 def _print_diff(diff: str) -> None:
-    """Print a colored diff."""
+    """Print a colored diff using branding colors."""
     for line in diff.splitlines():
-        if line.startswith("+") and not line.startswith("+++"):
-            console.print(f"[green]{line}[/green]")
-        elif line.startswith("-") and not line.startswith("---"):
-            console.print(f"[red]{line}[/red]")
-        elif line.startswith("@@"):
-            console.print(f"[cyan]{line}[/cyan]")
-        elif line.startswith("diff ") or line.startswith("index "):
-            console.print(f"[bold]{line}[/bold]")
-        else:
-            console.print(line)
+        console.print(format_diff_line(line))
 
 
 def _confirm(prompt: str) -> bool:
@@ -811,6 +940,26 @@ def _confirm(prompt: str) -> bool:
     except (EOFError, KeyboardInterrupt):
         console.print("\n[red]Aborted[/red]")
         return False
+
+
+def _enable_safe_mode() -> None:
+    """
+    Enable safe mode by disabling dangerous tools.
+
+    This removes all tools with RiskLevel.DANGEROUS from the registry,
+    preventing them from being called during the session.
+    """
+    from .tools.base import registry, RiskLevel
+
+    # Get list of dangerous tools to remove
+    dangerous_tools = [
+        name for name, tool in registry._tools.items()
+        if tool.risk_level == RiskLevel.DANGEROUS
+    ]
+
+    # Remove dangerous tools from registry
+    for name in dangerous_tools:
+        del registry._tools[name]
 
 
 # Legacy commands for backward compatibility

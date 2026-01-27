@@ -1,5 +1,7 @@
 """
 Roura Agent Doctor - System health diagnostics.
+
+© Roura.io
 """
 from __future__ import annotations
 
