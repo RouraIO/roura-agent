@@ -37,6 +37,11 @@ env/
 .env
 .env.local
 .env.*.local
+.env.stripe
+
+# Payment & licensing (sensitive data)
+licenses.json
+stripe_config.json
 
 # OS
 .DS_Store
