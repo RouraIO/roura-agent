@@ -28,7 +28,7 @@ from .config import (
     Config, Credentials, CONFIG_FILE, CREDENTIALS_FILE,
 )
 from .branding import (
-    LOGO, Colors, Icons, Styles,
+    get_logo, Colors, Icons, Styles,
     format_error, format_success, format_warning,
     format_diff, format_diff_line, get_risk_color,
 )
@@ -156,8 +156,11 @@ def _run_agent(
 ):
     """Launch the interactive agent."""
     from .agent.loop import AgentLoop, AgentConfig as LoopConfig
-    from .onboarding import check_and_run_onboarding
+    from .onboarding import check_and_run_onboarding, clear_screen, get_tier_display
     from .llm import get_provider, detect_available_providers, ProviderType
+
+    # Clear the terminal for a clean start
+    clear_screen()
 
     # Check for first-run onboarding
     if not check_and_run_onboarding(console):
@@ -166,6 +169,14 @@ def _run_agent(
     # Load and apply configuration
     config, creds = get_effective_config()
     apply_config_to_env(config, creds)
+
+    # Display logo with version
+    console.print(get_logo())
+
+    # Display tier indicator
+    tier_display = get_tier_display()
+    console.print(f"  {tier_display}")
+    console.print()
 
     # Display mode indicators
     modes = []
@@ -190,9 +201,6 @@ def _run_agent(
 
     if modes or allow or block:
         console.print()
-
-    # Display logo
-    console.print(LOGO)
 
     # Determine provider type
     provider_type = None

@@ -752,14 +752,46 @@ You are working in a project directory. Reference files by their path relative t
 
         session_id = self._current_session.id[:8]
 
+        # Get tier display
+        from ..onboarding import get_tier_display
+        tier_display = get_tier_display()
+
+        # Build session info box with split layout
+        # Left side: description, Right side: model/session info
+        from rich.columns import Columns
+        from rich.text import Text as RichText
+
+        left_content = (
+            f"[{Styles.HEADER}]Roura Agent[/{Styles.HEADER}]\n"
+            f"[{Colors.DIM}]Local AI Coding Assistant[/{Colors.DIM}]\n\n"
+            "I can read, write, and edit files,\n"
+            "run commands, and help with git.\n\n"
+            f"[{Colors.PRIMARY}]/help[/{Colors.PRIMARY}] commands  "
+            f"[{Colors.PRIMARY}]ESC[/{Colors.PRIMARY}] interrupt\n"
+            f"[{Colors.PRIMARY}]exit[/{Colors.PRIMARY}] quit     "
+            f"[{Colors.PRIMARY}]/upgrade[/{Colors.PRIMARY}] PRO"
+        )
+
+        right_content = (
+            f"[{Colors.PRIMARY}]Model[/{Colors.PRIMARY}]\n"
+            f"  {llm.model_name}\n\n"
+            f"[{Colors.PRIMARY}]Provider[/{Colors.PRIMARY}]\n"
+            f"  {llm.provider_type.value}\n\n"
+            f"[{Colors.PRIMARY}]Session[/{Colors.PRIMARY}]\n"
+            f"  {session_id}\n\n"
+            f"[{Colors.PRIMARY}]Tier[/{Colors.PRIMARY}]\n"
+            f"  {tier_display}"
+        )
+
+        # Create two-column layout
+        layout_table = Table.grid(padding=(0, 2))
+        layout_table.add_column(justify="left", ratio=3)
+        layout_table.add_column(justify="left", ratio=2)
+        layout_table.add_row(left_content, right_content)
+
         self.console.print()
         self.console.print(Panel(
-            f"[{Styles.HEADER}]Roura Agent[/{Styles.HEADER}] - Local AI Coding Assistant\n\n"
-            f"[{Colors.DIM}]{provider_info} | {model_info} | {tools_info}[/{Colors.DIM}]\n\n"
-            "I can read, write, and edit files, run commands, and help with git.\n"
-            "I work in an agentic loop - I'll use tools and iterate until done.\n\n"
-            f"[{Colors.PRIMARY}]/help[/{Colors.PRIMARY}] for commands | [{Colors.PRIMARY}]exit[/{Colors.PRIMARY}] to quit | [{Colors.PRIMARY}]ESC[/{Colors.PRIMARY}] to interrupt\n"
-            f"[{Colors.DIM}]Session: {session_id}[/{Colors.DIM}]",
+            layout_table,
             title=f"[{Colors.PRIMARY_BOLD}]{Icons.ROCKET} Roura.io[/{Colors.PRIMARY_BOLD}]",
             border_style=Colors.BORDER_PRIMARY,
         ))
@@ -828,6 +860,14 @@ You are working in a project directory. Reference files by their path relative t
                         self._export_session(format_type)
                         continue
 
+                    if user_input.lower() in ("/upgrade", "/pricing"):
+                        self._show_upgrade()
+                        continue
+
+                    if user_input.lower() in ("/license", "/key"):
+                        self._manage_license()
+                        continue
+
                     # Process request through agentic loop
                     self.process(user_input)
 
@@ -851,6 +891,8 @@ You are working in a project directory. Reference files by their path relative t
             f"  [{Colors.PRIMARY}]/clear[/{Colors.PRIMARY}]    - Clear conversation and context\n"
             f"  [{Colors.PRIMARY}]/tools[/{Colors.PRIMARY}]    - List available tools\n"
             f"  [{Colors.PRIMARY}]/keys[/{Colors.PRIMARY}]     - Show keyboard shortcuts\n"
+            f"  [{Colors.PRIMARY}]/upgrade[/{Colors.PRIMARY}]  - View pricing and upgrade to PRO\n"
+            f"  [{Colors.PRIMARY}]/license[/{Colors.PRIMARY}]  - View or enter license key\n"
             f"  [{Colors.PRIMARY}]exit[/{Colors.PRIMARY}]      - Quit\n\n"
             f"[{Styles.HEADER}]How I Work:[/{Styles.HEADER}]\n"
             "  \u2022 I operate in an agentic loop\n"
@@ -910,6 +952,130 @@ You are working in a project directory. Reference files by their path relative t
             title=f"[{Styles.HEADER}]Keyboard Shortcuts[/{Styles.HEADER}]",
             border_style=Colors.BORDER_INFO,
         ))
+
+    def _show_upgrade(self) -> None:
+        """Show upgrade options and pricing."""
+        from ..licensing import get_current_tier, Tier
+
+        current_tier = get_current_tier()
+
+        # Pricing table
+        pricing_table = Table(show_header=True, header_style="bold", border_style=Colors.BORDER_PRIMARY)
+        pricing_table.add_column("Plan", style=Colors.PRIMARY)
+        pricing_table.add_column("Price", justify="right")
+        pricing_table.add_column("Features")
+
+        pricing_table.add_row(
+            "FREE",
+            "$0",
+            "Ollama (local LLM), File ops, Git, Shell"
+        )
+        pricing_table.add_row(
+            "PRO Monthly",
+            "$19/mo",
+            "+ OpenAI, Anthropic, Auto-fix loops, GitHub, Jira"
+        )
+        pricing_table.add_row(
+            "PRO Annual",
+            "$159/yr",
+            "Same as PRO Monthly (save 30%)"
+        )
+        pricing_table.add_row(
+            "PRO Lifetime",
+            "$299",
+            "Same as PRO (one-time payment)"
+        )
+
+        self.console.print()
+        self.console.print(pricing_table)
+        self.console.print()
+
+        if current_tier == Tier.FREE:
+            self.console.print(f"[{Colors.PRIMARY_BOLD}]Upgrade to PRO:[/{Colors.PRIMARY_BOLD}]")
+            self.console.print()
+            self.console.print(f"  Monthly:  https://buy.stripe.com/3cI28r8zl0tG92b6Cb5kk00")
+            self.console.print(f"  Annual:   https://buy.stripe.com/14A7sL2aXa4g5PZ0dN5kk01")
+            self.console.print(f"  Lifetime: https://buy.stripe.com/4gMfZh8zl90c3HR3pZ5kk02")
+            self.console.print()
+            self.console.print(f"[{Colors.DIM}]After purchase, use /license to enter your key.[/{Colors.DIM}]")
+        else:
+            self.console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS} You're on the {current_tier.value.upper()} tier![/{Colors.SUCCESS}]")
+
+        self.console.print()
+
+    def _manage_license(self) -> None:
+        """View or enter license key."""
+        from ..licensing import get_current_tier, get_current_license, validate_license_key, clear_license_cache, Tier
+        from ..onboarding import GLOBAL_ENV_FILE, load_env_file, save_env_file
+        import os
+
+        current_tier = get_current_tier()
+        current_license = get_current_license()
+
+        self.console.print()
+
+        if current_license and current_license.is_valid:
+            # Show current license info
+            self.console.print(f"[{Colors.PRIMARY_BOLD}]Current License[/{Colors.PRIMARY_BOLD}]")
+            self.console.print()
+            self.console.print(f"  Tier:    [{Colors.SUCCESS}]{current_license.tier.value.upper()}[/{Colors.SUCCESS}]")
+            self.console.print(f"  Email:   {current_license.email}")
+            if current_license.valid_until:
+                self.console.print(f"  Expires: {current_license.valid_until.strftime('%Y-%m-%d')}")
+            else:
+                self.console.print(f"  Expires: [{Colors.SUCCESS}]Never (Lifetime)[/{Colors.SUCCESS}]")
+            self.console.print()
+
+            # Ask if they want to enter a new key
+            try:
+                change = Prompt.ask(
+                    f"[{Colors.DIM}]Enter a new license key?[/{Colors.DIM}]",
+                    choices=["yes", "no"],
+                    default="no",
+                )
+                if change.lower() != "yes":
+                    return
+            except (EOFError, KeyboardInterrupt):
+                self.console.print()
+                return
+        else:
+            self.console.print(f"[{Colors.DIM}]No active license. Current tier: FREE[/{Colors.DIM}]")
+            self.console.print()
+
+        # Prompt for new license key
+        try:
+            new_key = Prompt.ask(f"[{Colors.PRIMARY}]Enter license key[/{Colors.PRIMARY}]")
+        except (EOFError, KeyboardInterrupt):
+            self.console.print(f"\n[{Colors.DIM}]Cancelled[/{Colors.DIM}]")
+            return
+
+        if not new_key.strip():
+            self.console.print(f"[{Colors.DIM}]No key entered[/{Colors.DIM}]")
+            return
+
+        # Validate the key
+        license_obj = validate_license_key(new_key.strip())
+        if license_obj and license_obj.is_valid:
+            # Save to .env file
+            env_vars = {}
+            if GLOBAL_ENV_FILE.exists():
+                env_vars = load_env_file(GLOBAL_ENV_FILE)
+            env_vars["ROURA_LICENSE_KEY"] = new_key.strip()
+            save_env_file(GLOBAL_ENV_FILE, env_vars)
+
+            # Apply to current session
+            os.environ["ROURA_LICENSE_KEY"] = new_key.strip()
+            clear_license_cache()
+
+            self.console.print()
+            self.console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS} License activated![/{Colors.SUCCESS}]")
+            self.console.print(f"  Tier: [{Colors.SUCCESS}]{license_obj.tier.value.upper()}[/{Colors.SUCCESS}]")
+            self.console.print()
+            self.console.print(f"[{Colors.DIM}]Restart roura-agent to apply all PRO features.[/{Colors.DIM}]")
+        else:
+            self.console.print(f"[{Colors.ERROR}]{Icons.ERROR} Invalid license key[/{Colors.ERROR}]")
+
+        self.console.print()
 
     def _do_undo(self) -> None:
         """Undo the last file change."""

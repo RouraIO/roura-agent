@@ -37,6 +37,10 @@ PRICING = {
     'enterprise_annual': {'tier': 'ENTERPRISE', 'duration_days': 365},
 }
 
+# Track processed events to prevent duplicate emails (in-memory cache)
+# Note: For production with multiple instances, use Redis or a database
+processed_events: set[str] = set()
+
 
 def generate_license_key(email: str, tier: str, duration_days: int | None) -> dict:
     """Generate a license key."""
@@ -177,8 +181,14 @@ def webhook():
 
     try:
         event = json.loads(payload)
+        event_id = event.get('id')
         event_type = event.get('type')
-        print(f"Event: {event_type}")
+        print(f"Event: {event_type} ({event_id})")
+
+        # Check for duplicate events
+        if event_id in processed_events:
+            print(f"Duplicate event {event_id}, skipping")
+            return jsonify({'status': 'ok', 'message': 'Already processed'})
 
         if event_type == 'checkout.session.completed':
             session = event.get('data', {}).get('object', {})
@@ -195,6 +205,14 @@ def webhook():
             print(f"License: {license['key']}")
 
             if send_license_email(license, customer_name):
+                # Mark event as processed
+                processed_events.add(event_id)
+                # Keep cache bounded (remove old entries if too large)
+                if len(processed_events) > 10000:
+                    # Remove oldest half
+                    to_remove = list(processed_events)[:5000]
+                    for item in to_remove:
+                        processed_events.discard(item)
                 return jsonify({'status': 'ok', 'license': license['key']})
             else:
                 return jsonify({'error': 'Email failed'}), 500

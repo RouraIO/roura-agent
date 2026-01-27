@@ -128,6 +128,7 @@ class OllamaProvider(LLMProvider):
 
         Yields partial responses as tokens arrive.
         Tool calls are accumulated and included in the final response.
+        Yields periodic heartbeats during waiting to allow ESC interrupt checks.
         """
         payload: dict[str, Any] = {
             "model": self._model,
@@ -142,6 +143,9 @@ class OllamaProvider(LLMProvider):
         content_buffer: list[str] = []
         tool_calls_buffer: dict[int, dict] = {}
 
+        # Yield initial "thinking" response so caller can start ESC checking
+        yield LLMResponse(content="", done=False)
+
         try:
             with httpx.stream(
                 "POST",
@@ -151,33 +155,53 @@ class OllamaProvider(LLMProvider):
             ) as response:
                 response.raise_for_status()
 
-                for line in response.iter_lines():
-                    if not line:
-                        continue
+                line_buffer = ""
+                # Use iter_bytes for more granular streaming with periodic yields
+                for chunk in response.iter_bytes(chunk_size=256):
+                    if chunk:
+                        line_buffer += chunk.decode("utf-8", errors="replace")
 
-                    try:
-                        data = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
+                    # Process complete lines
+                    while "\n" in line_buffer:
+                        line, line_buffer = line_buffer.split("\n", 1)
+                        line = line.strip()
+                        if not line:
+                            continue
 
-                    message = data.get("message", {})
+                        try:
+                            data = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
 
-                    # Accumulate content
-                    if content := message.get("content"):
-                        content_buffer.append(content)
+                        message = data.get("message", {})
 
-                    # Accumulate tool calls (may be streamed incrementally)
-                    if raw_tool_calls := message.get("tool_calls"):
-                        self._accumulate_tool_calls(raw_tool_calls, tool_calls_buffer)
+                        # Accumulate content
+                        if content := message.get("content"):
+                            content_buffer.append(content)
 
-                    # Yield partial response for display
-                    yield LLMResponse(
-                        content="".join(content_buffer),
-                        done=data.get("done", False),
-                    )
+                        # Accumulate tool calls (may be streamed incrementally)
+                        if raw_tool_calls := message.get("tool_calls"):
+                            self._accumulate_tool_calls(raw_tool_calls, tool_calls_buffer)
 
-                    if data.get("done"):
-                        break
+                        # Yield partial response for display
+                        yield LLMResponse(
+                            content="".join(content_buffer),
+                            done=data.get("done", False),
+                        )
+
+                        if data.get("done"):
+                            # Build final tool calls and exit
+                            final_tool_calls = self._build_tool_calls(tool_calls_buffer)
+                            yield LLMResponse(
+                                content="".join(content_buffer),
+                                tool_calls=final_tool_calls,
+                                done=True,
+                            )
+                            return
+
+                    # Yield heartbeat after processing chunk (even if no complete line)
+                    # This allows ESC checking during slow token generation
+                    yield LLMResponse(content="".join(content_buffer), done=False)
 
         except httpx.TimeoutException as e:
             error = RouraError(ErrorCode.OLLAMA_TIMEOUT, cause=e)
@@ -196,10 +220,8 @@ class OllamaProvider(LLMProvider):
             yield LLMResponse(error=error.message, done=True)
             return
 
-        # Build final tool calls
+        # Build final tool calls (fallback if stream ended without done=True)
         final_tool_calls = self._build_tool_calls(tool_calls_buffer)
-
-        # Yield final complete response
         yield LLMResponse(
             content="".join(content_buffer),
             tool_calls=final_tool_calls,

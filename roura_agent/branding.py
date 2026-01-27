@@ -27,7 +27,23 @@ LOGO = """
  ██╔══██╗██║   ██║██║   ██║██╔══██╗██╔══██║
  ██║  ██║╚██████╔╝╚██████╔╝██║  ██║██║  ██║
  ╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝
-[/cyan][dim]  Local AI Coding Assistant • roura.io[/dim]
+[/cyan]"""
+
+# Import version from constants (single source of truth)
+from .constants import VERSION as _VERSION
+
+# Dynamic logo with version - use function to get version at runtime
+def get_logo() -> str:
+    """Get the logo with version number."""
+    return f"""
+[cyan]
+ ██████╗  ██████╗ ██╗   ██╗██████╗  █████╗
+ ██╔══██╗██╔═══██╗██║   ██║██╔══██╗██╔══██╗
+ ██████╔╝██║   ██║██║   ██║██████╔╝███████║
+ ██╔══██╗██║   ██║██║   ██║██╔══██╗██╔══██║
+ ██║  ██║╚██████╔╝╚██████╔╝██║  ██║██║  ██║
+ ╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝
+[/cyan][dim]  🚀 Roura.io v{_VERSION}[/dim]
 """
 
 # Compact logo for tight spaces
@@ -39,8 +55,8 @@ BRAND_TAGLINE = "Local AI Coding Assistant"
 BRAND_COMPANY = "Roura.io"
 BRAND_URL = "https://roura.io"
 
-# Import version from constants (single source of truth)
-from .constants import VERSION as BRAND_VERSION
+# BRAND_VERSION imported above as _VERSION for logo
+BRAND_VERSION = _VERSION
 
 
 class Colors:
