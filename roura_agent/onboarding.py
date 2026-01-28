@@ -524,6 +524,58 @@ def run_onboarding(console: Optional[Console] = None) -> bool:
                 )
                 console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS}[/{Colors.SUCCESS}] Anthropic configured")
 
+        console.print()
+
+        # Step 2e: Configure Jira (optional, PRO only)
+        console.print(f"[{Colors.PRIMARY_BOLD}]Configure Jira[/{Colors.PRIMARY_BOLD}] [dim](optional)[/dim]")
+        if Confirm.ask("Set up Jira integration?", default=False):
+            console.print(f"[{Colors.DIM}]Get your API token from: https://id.atlassian.com/manage-profile/security/api-tokens[/{Colors.DIM}]")
+            console.print()
+
+            jira_url = Prompt.ask("Jira URL (e.g., https://company.atlassian.net)")
+            if jira_url.strip():
+                env_vars["JIRA_URL"] = jira_url.strip().rstrip("/")
+
+                jira_email = Prompt.ask("Jira email")
+                if jira_email.strip():
+                    env_vars["JIRA_EMAIL"] = jira_email.strip()
+
+                    jira_token = Prompt.ask("Jira API token", password=True)
+                    if jira_token.strip():
+                        env_vars["JIRA_TOKEN"] = jira_token.strip()
+                        console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS}[/{Colors.SUCCESS}] Jira configured")
+
+        console.print()
+
+        # Step 2f: Check GitHub CLI (optional, PRO only)
+        console.print(f"[{Colors.PRIMARY_BOLD}]GitHub Integration[/{Colors.PRIMARY_BOLD}] [dim](uses gh CLI)[/dim]")
+        console.print()
+
+        # Check if gh is installed and authenticated
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["gh", "auth", "status"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS}[/{Colors.SUCCESS}] GitHub CLI authenticated")
+                # Extract account info
+                for line in result.stderr.split("\n"):
+                    if "Logged in to" in line:
+                        console.print(f"[{Colors.DIM}]   {line.strip()}[/{Colors.DIM}]")
+                        break
+            else:
+                console.print(f"[{Colors.WARNING}]{Icons.WARNING}[/{Colors.WARNING}] GitHub CLI not authenticated")
+                console.print(f"[{Colors.DIM}]   Run: gh auth login[/{Colors.DIM}]")
+        except FileNotFoundError:
+            console.print(f"[{Colors.WARNING}]{Icons.WARNING}[/{Colors.WARNING}] GitHub CLI not installed")
+            console.print(f"[{Colors.DIM}]   Install: brew install gh[/{Colors.DIM}]")
+        except Exception:
+            console.print(f"[{Colors.DIM}]GitHub CLI check skipped[/{Colors.DIM}]")
+
     console.print()
 
     # Step 3: Save configuration
