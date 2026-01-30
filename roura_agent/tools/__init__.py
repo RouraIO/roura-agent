@@ -121,6 +121,14 @@ from .notebook import (
     execute_notebook,
     create_notebook,
 )
+from .project import (
+    analyze_project,
+    find_related_files,
+    get_project_summary,
+    project_analyze,
+    project_related,
+    project_summary,
+)
 
 __all__ = [
     # Base
@@ -262,4 +270,11 @@ __all__ = [
     "edit_notebook_cell",
     "execute_notebook",
     "create_notebook",
+    # Project Analysis (Phase 7)
+    "analyze_project",
+    "find_related_files",
+    "get_project_summary",
+    "project_analyze",
+    "project_related",
+    "project_summary",
 ]

@@ -70,9 +70,11 @@ class AgentConfig:
     show_tool_results: bool = True
     multi_agent_mode: bool = True  # Enable orchestrator delegation (on by default)
     # Smart escalation: use more powerful models when local model struggles
+    # Smart escalation: very conservative - local models should do 99% of work
     escalation_enabled: bool = True
-    escalation_providers: list = None  # Fallback providers in order (e.g., ["openai", "anthropic"])
-    escalation_prompt_user: bool = True  # Ask before escalating
+    escalation_min_failures: int = 3  # Only escalate after 3 consecutive failures
+    escalation_prompt_user: bool = True  # Always ask before escalating
+    escalation_auto: bool = False  # Never auto-escalate without user consent
 
 
 class AgentLoop:
@@ -109,11 +111,12 @@ CRITICAL RULES:
 5. Do the work, then share results conversationally
 
 When reviewing a project:
-1. Start with fs.list to see the structure
-2. Read key files (README, main entry points, configs)
-3. Provide a helpful summary of what you found
+1. Use project.analyze for a quick overview of languages and structure
+2. Use project.summary to understand what the project does
+3. Read key files (README, main entry points, configs)
+4. Provide a helpful, conversational summary
 
-Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.log, git.add, git.commit, shell.exec"""
+Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.log, git.add, git.commit, shell.exec, project.analyze, project.summary, project.related"""
 
     def __init__(
         self,
@@ -137,6 +140,7 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
         self._current_session: Optional[Session] = None
         self._orchestrator: Optional[Orchestrator] = None
         self._current_agent: Optional[str] = None  # Track which agent is working
+        self._consecutive_failures: int = 0  # Track failures for escalation
 
         # Initialize orchestrator if multi-agent mode is enabled
         if self.config.multi_agent_mode:
@@ -611,11 +615,17 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
             self.console.print(f"\n[{Colors.WARNING}]{Icons.LIGHTNING} Interrupted[/{Colors.WARNING}]")
             return False
 
+        # Reset failure counter on any successful response
+        if not response.error:
+            self._consecutive_failures = 0
+
         if response.error:
+            self._consecutive_failures += 1
             self.console.print(f"\n[{Colors.ERROR}]{Icons.ERROR} {response.error}[/{Colors.ERROR}]")
-            # Check if we should offer escalation
+            # Check if we should offer escalation (only after multiple failures)
             if self._should_offer_escalation():
-                if self._offer_escalation("Model error - try a more powerful model?"):
+                if self._offer_escalation(f"Local model failed {self._consecutive_failures} times. Try cloud model?"):
+                    self._consecutive_failures = 0  # Reset on escalation
                     return True  # Retry with new model
             return False
 
@@ -1397,12 +1407,20 @@ roura-agent setup    # Reconfigure settings
             self.console.print(f"[{Colors.ERROR}]Failed to switch: {e}[/{Colors.ERROR}]")
 
     def _should_offer_escalation(self) -> bool:
-        """Check if we should offer to escalate to a more powerful model."""
+        """Check if we should offer to escalate to a more powerful model.
+
+        Escalation is very conservative - local models should handle 99% of tasks.
+        Only offer after multiple consecutive failures.
+        """
         if not self.config.escalation_enabled:
             return False
 
         # Only escalate from local models (Ollama)
         if not self._llm or self._llm.provider_type != ProviderType.OLLAMA:
+            return False
+
+        # Require multiple consecutive failures before offering escalation
+        if self._consecutive_failures < self.config.escalation_min_failures:
             return False
 
         # Check if we have escalation providers available
@@ -1411,13 +1429,13 @@ roura-agent setup    # Reconfigure settings
         return ProviderType.OPENAI in available or ProviderType.ANTHROPIC in available
 
     def _offer_escalation(self, reason: str) -> bool:
-        """Offer to escalate to a more powerful model. Returns True if escalated."""
+        """Offer to escalate to a more powerful model. Returns True if escalated.
+
+        Escalation is a last resort - local models should handle most tasks.
+        """
         from ..llm import detect_available_providers, get_provider
 
-        if not self.config.escalation_prompt_user:
-            # Auto-escalate without prompting
-            return self._do_escalate()
-
+        # Always prompt user - never auto-escalate
         available = detect_available_providers()
         fallbacks = []
         if ProviderType.ANTHROPIC in available:
@@ -1428,20 +1446,21 @@ roura-agent setup    # Reconfigure settings
         if not fallbacks:
             return False
 
-        # Show escalation prompt
+        # Show escalation prompt - make it clear this uses cloud
         self.console.print()
         self.console.print(f"[{Colors.WARNING}]{Icons.WARNING} {reason}[/{Colors.WARNING}]")
-        self.console.print(f"[{Colors.DIM}]Available fallbacks: {', '.join(name for _, name in fallbacks)}[/{Colors.DIM}]")
+        self.console.print(f"[{Colors.DIM}]This will use a cloud API (costs may apply).[/{Colors.DIM}]")
 
         try:
             choices = [name.lower() for _, name in fallbacks] + ["no"]
             response = Prompt.ask(
-                f"[{Colors.PRIMARY}]Escalate to[/{Colors.PRIMARY}]",
+                f"[{Colors.PRIMARY}]Use cloud model?[/{Colors.PRIMARY}]",
                 choices=choices,
-                default="no",
+                default="no",  # Default to staying local
             )
 
             if response.lower() == "no":
+                self.console.print(f"[{Colors.DIM}]Continuing with local model.[/{Colors.DIM}]")
                 return False
 
             # Map response to provider
@@ -1451,7 +1470,11 @@ roura-agent setup    # Reconfigure settings
             if provider_type:
                 self._llm = get_provider(provider_type)
                 self._provider_type = provider_type
-                self.console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS}[/{Colors.SUCCESS}] Escalated to {self._llm.model_name}")
+                self.console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS}[/{Colors.SUCCESS}] Using {self._llm.model_name} for this task")
+
+                # Save last provider
+                from ..onboarding import save_last_provider
+                save_last_provider(provider_type.value)
                 return True
 
         except (EOFError, KeyboardInterrupt):
@@ -1459,24 +1482,6 @@ roura-agent setup    # Reconfigure settings
 
         return False
 
-    def _do_escalate(self) -> bool:
-        """Auto-escalate to the first available powerful model."""
-        from ..llm import detect_available_providers, get_provider
-
-        available = detect_available_providers()
-
-        # Prefer Anthropic, then OpenAI
-        for provider_type in [ProviderType.ANTHROPIC, ProviderType.OPENAI]:
-            if provider_type in available:
-                try:
-                    self._llm = get_provider(provider_type)
-                    self._provider_type = provider_type
-                    self.console.print(f"[{Colors.INFO}]{Icons.INFO} Auto-escalated to {self._llm.model_name}[/{Colors.INFO}]")
-                    return True
-                except Exception:
-                    continue
-
-        return False
 
     def _check_for_updates_notification(self) -> None:
         """Check for updates and show notification if available."""
