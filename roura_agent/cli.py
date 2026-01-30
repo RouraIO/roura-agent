@@ -214,6 +214,19 @@ def _run_agent(
     # Display logo
     console.print(get_logo())
 
+    # Check for updates (non-blocking, cached)
+    from .update import check_for_updates
+    update_info = check_for_updates()
+    if update_info and update_info.has_update:
+        console.print(
+            f"[{Colors.SUCCESS}]{Icons.SUCCESS} Update available: v{update_info.latest_version}[/{Colors.SUCCESS}] "
+            f"[{Colors.DIM}](current: v{update_info.current_version})[/{Colors.DIM}]"
+        )
+        console.print(
+            f"[{Colors.DIM}]  Run 'roura-agent update' or 'pipx upgrade roura-agent'[/{Colors.DIM}]"
+        )
+        console.print()
+
     # Handle safe mode early
     if safe_mode:
         _enable_safe_mode()
@@ -420,6 +433,38 @@ def config():
     console.print(table)
     console.print(f"\n[dim]Config file: {CONFIG_FILE}[/dim]")
     console.print(f"[dim]Run 'roura-agent setup' to configure interactively[/dim]")
+
+
+@app.command()
+def update(
+    force: bool = typer.Option(False, "--force", "-f", help="Force check, ignore cache"),
+):
+    """Check for and install updates."""
+    from .update import check_for_updates, perform_update
+
+    console.print(f"[{Colors.PRIMARY}]Checking for updates...[/{Colors.PRIMARY}]")
+
+    update_info = check_for_updates(force=force)
+
+    if update_info is None:
+        console.print(f"[{Colors.ERROR}]Could not check for updates. Check your internet connection.[/{Colors.ERROR}]")
+        raise typer.Exit(1)
+
+    if not update_info.has_update:
+        console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS} You're on the latest version (v{update_info.current_version})[/{Colors.SUCCESS}]")
+        return
+
+    console.print(f"\n[{Colors.SUCCESS}]{Icons.SUCCESS} Update available![/{Colors.SUCCESS}]")
+    console.print(f"  Current: v{update_info.current_version}")
+    console.print(f"  Latest:  v{update_info.latest_version}")
+
+    if update_info.new_features:
+        console.print(f"\n[{Colors.INFO}]New features:[/{Colors.INFO}]")
+        for feature in update_info.new_features[:5]:
+            console.print(f"  • {feature}")
+
+    if Confirm.ask(f"\n[{Colors.PRIMARY}]Install update?[/{Colors.PRIMARY}]", default=True):
+        perform_update(console)
 
 
 @app.command()

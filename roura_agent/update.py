@@ -19,8 +19,9 @@ from .constants import VERSION, VERSION_TUPLE
 
 
 # GitHub repo for version checking
-GITHUB_REPO = "roura-io/roura-agent"
+GITHUB_REPO = "RouraIO/roura-agent"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+GITHUB_TAGS_URL = f"https://api.github.com/repos/{GITHUB_REPO}/tags"
 
 # Local cache for update check (don't spam GitHub API)
 CACHE_DIR = Path.home() / ".config" / "roura-agent" / "cache"
@@ -85,20 +86,35 @@ def check_for_updates(force: bool = False) -> Optional[UpdateInfo]:
                 headers={"Accept": "application/vnd.github.v3+json"},
             )
 
+            latest_version = None
+            release_notes = ""
+            release_url = ""
+
             if response.status_code == 404:
-                # No releases yet
-                return UpdateInfo(
-                    current_version=VERSION,
-                    latest_version=VERSION,
-                    has_update=False,
+                # No releases yet, try tags instead
+                tags_response = client.get(
+                    GITHUB_TAGS_URL,
+                    headers={"Accept": "application/vnd.github.v3+json"},
                 )
+                if tags_response.status_code == 200:
+                    tags = tags_response.json()
+                    if tags:
+                        # Get the first (most recent) tag
+                        latest_version = tags[0].get("name", VERSION).lstrip("v")
+                        release_url = f"https://github.com/{GITHUB_REPO}/releases/tag/v{latest_version}"
 
-            response.raise_for_status()
-            data = response.json()
-
-        latest_version = data.get("tag_name", VERSION).lstrip("v")
-        release_notes = data.get("body", "")
-        release_url = data.get("html_url", "")
+                if not latest_version:
+                    return UpdateInfo(
+                        current_version=VERSION,
+                        latest_version=VERSION,
+                        has_update=False,
+                    )
+            else:
+                response.raise_for_status()
+                data = response.json()
+                latest_version = data.get("tag_name", VERSION).lstrip("v")
+                release_notes = data.get("body", "")
+                release_url = data.get("html_url", "")
 
         # Parse new features from release notes (lines starting with "- NEW:" or "NEW:")
         new_features = []
