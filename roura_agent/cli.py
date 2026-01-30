@@ -129,6 +129,11 @@ def main(
         "-d",
         help="Enable debug logging to console",
     ),
+    resume: str = typer.Option(
+        None,
+        "--resume",
+        help="Resume a previous session by ID",
+    ),
 ):
     """
     [bold cyan]Roura Agent[/bold cyan] - Local-first AI coding assistant by [bold]Roura.io[/bold].
@@ -183,6 +188,7 @@ def main(
             allow=allow,
             block=block,
             debug=debug,
+            resume=resume,
         )
 
 
@@ -194,6 +200,7 @@ def _run_agent(
     allow: list[str] = None,
     block: list[str] = None,
     debug: bool = False,
+    resume: str = None,
 ):
     """Launch the interactive agent."""
     from .agent.loop import AgentLoop, AgentConfig as LoopConfig
@@ -346,6 +353,8 @@ def _run_agent(
     agent = AgentLoop(console=console, config=loop_config, project=project)
     if provider_type:
         agent.set_provider(provider_type)
+    if resume:
+        agent._resume_session(resume)
     agent.run()
 
 

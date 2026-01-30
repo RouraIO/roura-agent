@@ -19,7 +19,7 @@ COMMANDS = {
     "/walkthrough": "Interactive tutorial - learn how to use Roura Agent",
     "/help": "Show help and available commands",
     "/model": "Switch LLM provider (ollama, openai, anthropic)",
-    "/update": "Check for and install updates",
+    "/upgrade": "Check for and install updates",
     "/context": "Show loaded file context",
     "/undo": "Undo last file change",
     "/clear": "Clear conversation and context",
@@ -29,7 +29,8 @@ COMMANDS = {
     "/resume": "Resume a previous session",
     "/export": "Export current session",
     "/license": "View or enter license key",
-    "/upgrade": "View pricing and upgrade to PRO",
+    "/pricing": "View pricing and upgrade to PRO",
+    "/restart": "Restart CLI (preserves session)",
     "exit": "Quit roura-agent",
 }
 

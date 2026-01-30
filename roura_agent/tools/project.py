@@ -6,6 +6,7 @@ Roura Agent Project Tools - Analyze and understand large codebases.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from collections import defaultdict
@@ -334,39 +335,58 @@ def get_project_summary(path: str = ".") -> ToolResult:
     )
 
 
-# Register tools
-project_analyze = Tool(
-    name="project.analyze",
-    description="Analyze a project's structure, languages, and key files. Great for understanding large codebases.",
-    parameters=[
+# Tool classes
+@dataclass
+class ProjectAnalyzeTool(Tool):
+    """Analyze a project's structure, languages, and key files."""
+
+    name: str = "project.analyze"
+    description: str = "Analyze a project's structure, languages, and key files. Great for understanding large codebases."
+    risk_level: RiskLevel = RiskLevel.SAFE
+    parameters: list[ToolParam] = field(default_factory=lambda: [
         ToolParam(name="path", type=str, description="Project directory path", default="."),
         ToolParam(name="max_depth", type=int, description="Maximum directory depth to scan", default=4, required=False),
-    ],
-    execute=analyze_project,
-    risk_level=RiskLevel.SAFE,
-)
+    ])
 
-project_related = Tool(
-    name="project.related",
-    description="Find files related to a given file (tests, similar files, etc).",
-    parameters=[
+    def execute(self, **kwargs) -> ToolResult:
+        return analyze_project(**kwargs)
+
+
+@dataclass
+class ProjectRelatedTool(Tool):
+    """Find files related to a given file."""
+
+    name: str = "project.related"
+    description: str = "Find files related to a given file (tests, similar files, etc)."
+    risk_level: RiskLevel = RiskLevel.SAFE
+    parameters: list[ToolParam] = field(default_factory=lambda: [
         ToolParam(name="path", type=str, description="Path to the file"),
-    ],
-    execute=find_related_files,
-    risk_level=RiskLevel.SAFE,
-)
+    ])
 
-project_summary = Tool(
-    name="project.summary",
-    description="Get a quick summary of what a project does.",
-    parameters=[
+    def execute(self, **kwargs) -> ToolResult:
+        return find_related_files(**kwargs)
+
+
+@dataclass
+class ProjectSummaryTool(Tool):
+    """Get a quick summary of what a project does."""
+
+    name: str = "project.summary"
+    description: str = "Get a quick summary of what a project does."
+    risk_level: RiskLevel = RiskLevel.SAFE
+    parameters: list[ToolParam] = field(default_factory=lambda: [
         ToolParam(name="path", type=str, description="Project directory path", default="."),
-    ],
-    execute=get_project_summary,
-    risk_level=RiskLevel.SAFE,
-)
+    ])
 
-# Register all tools
+    def execute(self, **kwargs) -> ToolResult:
+        return get_project_summary(**kwargs)
+
+
+# Instantiate and register tools
+project_analyze = ProjectAnalyzeTool()
+project_related = ProjectRelatedTool()
+project_summary = ProjectSummaryTool()
+
 registry.register(project_analyze)
 registry.register(project_related)
 registry.register(project_summary)

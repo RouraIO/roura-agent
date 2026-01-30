@@ -563,49 +563,74 @@ def suggest_fixes(path: str) -> ToolResult:
     )
 
 
-# Register tools
-code_review_file = Tool(
-    name="review.file",
-    description="Review a file for code quality issues, security vulnerabilities, and best practices. Returns a score and detailed analysis.",
-    parameters=[
+# Tool classes
+@dataclass
+class CodeReviewFileTool(Tool):
+    """Review a file for code quality issues."""
+
+    name: str = "review.file"
+    description: str = "Review a file for code quality issues, security vulnerabilities, and best practices. Returns a score and detailed analysis."
+    risk_level: RiskLevel = RiskLevel.SAFE
+    parameters: list[ToolParam] = field(default_factory=lambda: [
         ToolParam(name="path", type=str, description="Path to the file to review"),
-    ],
-    execute=review_file,
-    risk_level=RiskLevel.SAFE,
-)
+    ])
 
-code_review_diff = Tool(
-    name="review.diff",
-    description="Review a git diff for code quality issues. Great for PR reviews.",
-    parameters=[
+    def execute(self, **kwargs) -> ToolResult:
+        return review_file(**kwargs)
+
+
+@dataclass
+class CodeReviewDiffTool(Tool):
+    """Review a git diff for code quality issues."""
+
+    name: str = "review.diff"
+    description: str = "Review a git diff for code quality issues. Great for PR reviews."
+    risk_level: RiskLevel = RiskLevel.SAFE
+    parameters: list[ToolParam] = field(default_factory=lambda: [
         ToolParam(name="diff_text", type=str, description="The diff text to review"),
-    ],
-    execute=review_diff,
-    risk_level=RiskLevel.SAFE,
-)
+    ])
 
-code_review_project = Tool(
-    name="review.project",
-    description="Review an entire project for code quality. Scans multiple files and provides an overall assessment.",
-    parameters=[
+    def execute(self, **kwargs) -> ToolResult:
+        return review_diff(**kwargs)
+
+
+@dataclass
+class CodeReviewProjectTool(Tool):
+    """Review an entire project for code quality."""
+
+    name: str = "review.project"
+    description: str = "Review an entire project for code quality. Scans multiple files and provides an overall assessment."
+    risk_level: RiskLevel = RiskLevel.SAFE
+    parameters: list[ToolParam] = field(default_factory=lambda: [
         ToolParam(name="path", type=str, description="Project directory path", default="."),
         ToolParam(name="max_files", type=int, description="Maximum files to review", default=50, required=False),
-    ],
-    execute=review_project,
-    risk_level=RiskLevel.SAFE,
-)
+    ])
 
-code_suggest_fixes = Tool(
-    name="review.suggest",
-    description="Suggest specific fixes for issues in a file with code examples.",
-    parameters=[
+    def execute(self, **kwargs) -> ToolResult:
+        return review_project(**kwargs)
+
+
+@dataclass
+class CodeSuggestFixesTool(Tool):
+    """Suggest specific fixes for issues in a file."""
+
+    name: str = "review.suggest"
+    description: str = "Suggest specific fixes for issues in a file with code examples."
+    risk_level: RiskLevel = RiskLevel.SAFE
+    parameters: list[ToolParam] = field(default_factory=lambda: [
         ToolParam(name="path", type=str, description="Path to the file"),
-    ],
-    execute=suggest_fixes,
-    risk_level=RiskLevel.SAFE,
-)
+    ])
 
-# Register all tools
+    def execute(self, **kwargs) -> ToolResult:
+        return suggest_fixes(**kwargs)
+
+
+# Instantiate and register tools
+code_review_file = CodeReviewFileTool()
+code_review_diff = CodeReviewDiffTool()
+code_review_project = CodeReviewProjectTool()
+code_suggest_fixes = CodeSuggestFixesTool()
+
 registry.register(code_review_file)
 registry.register(code_review_diff)
 registry.register(code_review_project)

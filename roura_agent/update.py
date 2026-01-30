@@ -212,7 +212,6 @@ def perform_update(console) -> bool:
                 return False
 
             console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS} Update complete![/{Colors.SUCCESS}]")
-            console.print(f"\n[{Colors.WARNING}]Restart roura-agent to use the new version.[/{Colors.WARNING}]")
             return True
 
         except subprocess.TimeoutExpired:

@@ -945,7 +945,7 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
                         self._export_session(format_type)
                         continue
 
-                    if user_input.lower() in ("/upgrade", "/pricing"):
+                    if user_input.lower() == "/pricing":
                         self._show_upgrade()
                         continue
 
@@ -967,8 +967,13 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
                         self._switch_model(provider_name)
                         continue
 
-                    if user_input.lower() in ("/update", "/upgrade-cli"):
+                    if user_input.lower() == "/upgrade":
                         self._do_update()
+                        continue
+
+                    if user_input.lower() == "/restart":
+                        self._do_restart()
+                        # If we get here, restart failed
                         continue
 
                     if user_input.lower() in ("/walkthrough", "/tutorial", "/tour"):
@@ -995,7 +1000,8 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
             f"  [{Colors.PRIMARY}]/walkthrough[/{Colors.PRIMARY}] - Interactive tutorial\n"
             f"  [{Colors.PRIMARY}]/help[/{Colors.PRIMARY}]        - Show this help\n"
             f"  [{Colors.PRIMARY}]/model[/{Colors.PRIMARY}]       - Switch LLM provider\n"
-            f"  [{Colors.PRIMARY}]/update[/{Colors.PRIMARY}]      - Check for updates\n"
+            f"  [{Colors.PRIMARY}]/upgrade[/{Colors.PRIMARY}]     - Check for & install updates\n"
+            f"  [{Colors.PRIMARY}]/restart[/{Colors.PRIMARY}]     - Restart CLI (keeps session)\n"
             f"  [{Colors.PRIMARY}]/context[/{Colors.PRIMARY}]     - Show loaded files\n"
             f"  [{Colors.PRIMARY}]/undo[/{Colors.PRIMARY}]        - Undo last change\n"
             f"  [{Colors.PRIMARY}]/clear[/{Colors.PRIMARY}]       - Clear conversation\n"
@@ -1058,10 +1064,10 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
 |---------|-------------|
 | `/help` | Show all commands |
 | `/model` | Switch AI provider (ollama/openai/anthropic) |
-| `/model anthropic` | Switch to Claude |
 | `/context` | See files I've read |
 | `/undo` | Revert my last file change |
-| `/update` | Check for updates |
+| `/upgrade` | Check for & install updates |
+| `/restart` | Restart CLI (keeps session) |
 | `/clear` | Reset conversation |
 
 *Press Enter to continue...*
@@ -1494,7 +1500,7 @@ roura-agent setup    # Reconfigure settings
                     f"[{Colors.INFO}]{Icons.INFO} Update available: "
                     f"v{update_info.current_version} → v{update_info.latest_version}[/{Colors.INFO}]"
                 )
-                self.console.print(f"[{Colors.DIM}]Run /update to upgrade[/{Colors.DIM}]")
+                self.console.print(f"[{Colors.DIM}]Run /upgrade to install[/{Colors.DIM}]")
         except Exception:
             pass  # Silently fail - don't block startup
 
@@ -1525,6 +1531,34 @@ roura-agent setup    # Reconfigure settings
         if perform_update(self.console):
             # Check if new features need setup
             check_new_features_setup(self.console)
+            # Auto-restart to apply the update
+            self._do_restart()
+
+    def _do_restart(self) -> None:
+        """Restart the CLI, preserving the current session."""
+        import os
+        import sys
+
+        # Save current session first
+        self._auto_save_session()
+        session_id = self._current_session.id if self._current_session else None
+
+        self.console.print(f"[{Colors.INFO}]Restarting...[/{Colors.INFO}]")
+
+        # Get the executable and arguments
+        executable = sys.executable
+        script = sys.argv[0]
+
+        # Build new args, adding --resume if we have a session
+        args = [executable, script]
+        if session_id:
+            args.extend(["--resume", session_id])
+
+        # Replace current process
+        try:
+            os.execv(executable, args)
+        except Exception as e:
+            self.console.print(f"[{Colors.ERROR}]Failed to restart: {e}[/{Colors.ERROR}]")
 
     def _do_undo(self) -> None:
         """Undo the last file change."""
