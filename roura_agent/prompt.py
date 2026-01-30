@@ -18,8 +18,10 @@ from pathlib import Path
 COMMANDS = {
     "/walkthrough": "Interactive tutorial - learn how to use Roura Agent",
     "/help": "Show help and available commands",
+    "/status": "Show session info (version, model, project)",
     "/model": "Switch LLM provider (ollama, openai, anthropic)",
     "/upgrade": "Check for and install updates",
+    "/restart": "Restart CLI (preserves session)",
     "/context": "Show loaded file context",
     "/undo": "Undo last file change",
     "/clear": "Clear conversation and context",
@@ -30,7 +32,6 @@ COMMANDS = {
     "/export": "Export current session",
     "/license": "View or enter license key",
     "/pricing": "View pricing and upgrade to PRO",
-    "/restart": "Restart CLI (preserves session)",
     "exit": "Quit roura-agent",
 }
 

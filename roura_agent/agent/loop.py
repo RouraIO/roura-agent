@@ -976,6 +976,10 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
                         # If we get here, restart failed
                         continue
 
+                    if user_input.lower() == "/status":
+                        self._show_status()
+                        continue
+
                     if user_input.lower() in ("/walkthrough", "/tutorial", "/tour"):
                         self._show_walkthrough()
                         continue
@@ -997,8 +1001,8 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
         """Show help information."""
         self.console.print(Panel(
             f"[{Styles.HEADER}]Commands:[/{Styles.HEADER}]\n"
-            f"  [{Colors.PRIMARY}]/walkthrough[/{Colors.PRIMARY}] - Interactive tutorial\n"
             f"  [{Colors.PRIMARY}]/help[/{Colors.PRIMARY}]        - Show this help\n"
+            f"  [{Colors.PRIMARY}]/status[/{Colors.PRIMARY}]      - Show session info\n"
             f"  [{Colors.PRIMARY}]/model[/{Colors.PRIMARY}]       - Switch LLM provider\n"
             f"  [{Colors.PRIMARY}]/upgrade[/{Colors.PRIMARY}]     - Check for & install updates\n"
             f"  [{Colors.PRIMARY}]/restart[/{Colors.PRIMARY}]     - Restart CLI (keeps session)\n"
@@ -1063,11 +1067,12 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
 | Command | What it does |
 |---------|-------------|
 | `/help` | Show all commands |
-| `/model` | Switch AI provider (ollama/openai/anthropic) |
-| `/context` | See files I've read |
-| `/undo` | Revert my last file change |
+| `/status` | Show session info |
+| `/model` | Switch AI provider |
 | `/upgrade` | Check for & install updates |
 | `/restart` | Restart CLI (keeps session) |
+| `/context` | See files I've read |
+| `/undo` | Revert last file change |
 | `/clear` | Reset conversation |
 
 *Press Enter to continue...*
@@ -1559,6 +1564,45 @@ roura-agent setup    # Reconfigure settings
             os.execv(executable, args)
         except Exception as e:
             self.console.print(f"[{Colors.ERROR}]Failed to restart: {e}[/{Colors.ERROR}]")
+
+    def _show_status(self) -> None:
+        """Show current session status and info."""
+        from ..constants import VERSION
+        from ..licensing import get_current_tier
+
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style=Colors.DIM)
+        table.add_column("Value", style=Colors.PRIMARY)
+
+        # Version
+        table.add_row("Version", f"v{VERSION}")
+
+        # Model info
+        if self._llm:
+            table.add_row("Model", self._llm.model_name)
+            table.add_row("Provider", self._provider_type.value if self._provider_type else "unknown")
+
+        # Session info
+        if self._current_session:
+            table.add_row("Session", self._current_session.id[:8])
+            table.add_row("Messages", str(len(self.context.messages)))
+
+        # Project info
+        if self.project:
+            table.add_row("Project", self.project.name)
+            table.add_row("Path", str(self.context.project_root))
+
+        # License tier
+        tier = get_current_tier()
+        table.add_row("Tier", tier.upper())
+
+        # Context stats
+        if self.context.read_set:
+            table.add_row("Files read", str(len(self.context.read_set)))
+        if self.context.undo_stack:
+            table.add_row("Undoable changes", str(len(self.context.undo_stack)))
+
+        self.console.print(Panel(table, title=f"[{Styles.HEADER}]Status[/{Styles.HEADER}]", border_style=Colors.BORDER_INFO))
 
     def _do_undo(self) -> None:
         """Undo the last file change."""
