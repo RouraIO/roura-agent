@@ -1505,7 +1505,7 @@ roura-agent setup    # Reconfigure settings
                     f"[{Colors.INFO}]{Icons.INFO} Update available: "
                     f"v{update_info.current_version} → v{update_info.latest_version}[/{Colors.INFO}]"
                 )
-                self.console.print(f"[{Colors.DIM}]Run /upgrade to install[/{Colors.DIM}]")
+                self.console.print(f"[{Colors.DIM}]Run /upgrade to install (will restart, context may be lost)[/{Colors.DIM}]")
         except Exception:
             pass  # Silently fail - don't block startup
 

@@ -230,7 +230,10 @@ def _run_agent(
             f"[{Colors.DIM}](current: v{update_info.current_version})[/{Colors.DIM}]"
         )
         console.print(
-            f"[{Colors.DIM}]  Run 'roura-agent update' or 'pipx upgrade roura-agent'[/{Colors.DIM}]"
+            f"[{Colors.DIM}]  Use /upgrade inside the CLI (will restart, context may be lost)[/{Colors.DIM}]"
+        )
+        console.print(
+            f"[{Colors.DIM}]  Or exit and run: pipx upgrade roura-agent[/{Colors.DIM}]"
         )
         console.print()
 
