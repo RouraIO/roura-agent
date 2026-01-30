@@ -32,10 +32,10 @@ LOGO = """
 # Import version from constants (single source of truth)
 from .constants import VERSION as _VERSION
 
-# Dynamic logo with version - use function to get version at runtime
+# Dynamic logo - use function to get at runtime
 def get_logo() -> str:
-    """Get the logo with version number."""
-    return f"""
+    """Get the ASCII logo."""
+    return """
 [cyan]
  ██████╗  ██████╗ ██╗   ██╗██████╗  █████╗
  ██╔══██╗██╔═══██╗██║   ██║██╔══██╗██╔══██╗
@@ -43,8 +43,7 @@ def get_logo() -> str:
  ██╔══██╗██║   ██║██║   ██║██╔══██╗██╔══██║
  ██║  ██║╚██████╔╝╚██████╔╝██║  ██║██║  ██║
  ╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝
-[/cyan][dim]  🚀 Roura.io v{_VERSION}[/dim]
-"""
+[/cyan]"""
 
 # Compact logo for tight spaces
 LOGO_COMPACT = "[cyan bold]◆ ROURA[/cyan bold] [dim]• roura.io[/dim]"

@@ -112,6 +112,39 @@ class LLMProvider(ABC):
         """Get the provider type. Override in subclasses."""
         raise NotImplementedError
 
+    def supports_vision(self) -> bool:
+        """
+        Check if the current model supports vision/image input.
+
+        Returns:
+            True if vision is supported
+        """
+        return False
+
+    def chat_with_images(
+        self,
+        prompt: str,
+        images: list[dict],
+        system_prompt: Optional[str] = None,
+    ) -> LLMResponse:
+        """
+        Chat with image content.
+
+        Args:
+            prompt: Text prompt to accompany images
+            images: List of image dicts in provider format (e.g., Anthropic format)
+            system_prompt: Optional system prompt
+
+        Returns:
+            LLMResponse with the model's response
+
+        Raises:
+            NotImplementedError: If vision is not supported
+        """
+        if not self.supports_vision():
+            raise NotImplementedError(f"{self.__class__.__name__} does not support vision")
+        raise NotImplementedError("Subclass must implement chat_with_images")
+
 
 class ProviderRegistry:
     """
@@ -249,17 +282,27 @@ def get_provider(
         return provider_registry.create(provider_type, **kwargs)
 
     # Auto-detection based on environment
-    # Priority: OpenAI (if key set and licensed) > Anthropic (if key set and licensed) > Ollama
+    # Priority: Ollama (local-first) > Anthropic > OpenAI
+    # We prefer local models to keep data private and reduce costs
+
+    # Default to Ollama first (local-first philosophy)
+    if provider_registry.is_available(ProviderType.OLLAMA):
+        if os.getenv("OLLAMA_MODEL"):
+            try:
+                return provider_registry.create(ProviderType.OLLAMA, **kwargs)
+            except Exception:
+                pass  # Fall through to cloud providers
+
+    # Fall back to cloud providers if local is not available
+    if os.getenv("ANTHROPIC_API_KEY") and provider_registry.is_available(ProviderType.ANTHROPIC):
+        if not check_license or is_feature_enabled("provider.anthropic"):
+            return provider_registry.create(ProviderType.ANTHROPIC, **kwargs)
 
     if os.getenv("OPENAI_API_KEY") and provider_registry.is_available(ProviderType.OPENAI):
         if not check_license or is_feature_enabled("provider.openai"):
             return provider_registry.create(ProviderType.OPENAI, **kwargs)
 
-    if os.getenv("ANTHROPIC_API_KEY") and provider_registry.is_available(ProviderType.ANTHROPIC):
-        if not check_license or is_feature_enabled("provider.anthropic"):
-            return provider_registry.create(ProviderType.ANTHROPIC, **kwargs)
-
-    # Default to Ollama if registered (always allowed)
+    # Last resort: try Ollama anyway
     if provider_registry.is_available(ProviderType.OLLAMA):
         return provider_registry.create(ProviderType.OLLAMA, **kwargs)
 

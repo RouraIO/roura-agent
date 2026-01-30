@@ -30,7 +30,7 @@ from .schema import (
 from .glob import glob_tool, find_files
 from .grep import grep_tool, search_files
 from .memory import memory_store, memory_recall, memory_clear, store_note, recall_notes, clear_memory
-from .webfetch import web_fetch, web_search, fetch_webpage
+from .webfetch import web_fetch, web_search, fetch_webpage, search_web
 
 # New Phase 1 tools: Testing, Building, Linting
 from .testing import (
@@ -63,6 +63,63 @@ from .lint import (
     detect_linter,
     detect_formatter,
     detect_typechecker,
+)
+
+# Phase 6: Claude Code Feature Parity
+from .mcp import (
+    MCPManager,
+    MCPServer,
+    MCPServerConfig,
+    MCPServerStatus,
+    MCPTransportType,
+    MCPToolDefinition,
+    MCPResourceDefinition,
+    MCPPromptDefinition,
+    MCPListServersTool,
+    MCPListToolsTool,
+    MCPCallToolTool,
+    MCPConnectTool,
+    MCPDisconnectTool,
+    get_mcp_manager,
+    list_mcp_servers,
+    list_mcp_tools,
+    call_mcp_tool,
+)
+from .image import (
+    ImageData,
+    ImageSource,
+    ImageInfo,
+    ImageAnalyzer,
+    ImageReadTool,
+    ImageAnalyzeTool,
+    ImageCompareTool,
+    ImageToBase64Tool,
+    ImageFromUrlTool,
+    get_image_analyzer,
+    set_image_analyzer,
+    create_vision_callback,
+    read_image,
+    analyze_image,
+    compare_images,
+)
+from .notebook import (
+    Notebook,
+    NotebookCell,
+    CellType,
+    NotebookExecutor,
+    NotebookReadTool,
+    NotebookEditTool,
+    NotebookAddCellTool,
+    NotebookRemoveCellTool,
+    NotebookExecuteTool,
+    NotebookCreateTool,
+    NotebookToPythonTool,
+    NotebookClearOutputsTool,
+    get_notebook_executor,
+    read_notebook,
+    edit_notebook_cell,
+    execute_notebook,
+    create_notebook,
 )
 
 __all__ = [
@@ -124,6 +181,7 @@ __all__ = [
     "web_fetch",
     "web_search",
     "fetch_webpage",
+    "search_web",
     # Testing
     "TestRunTool",
     "TestFailuresTool",
@@ -152,4 +210,56 @@ __all__ = [
     "detect_linter",
     "detect_formatter",
     "detect_typechecker",
+    # MCP Server Support (Phase 6)
+    "MCPManager",
+    "MCPServer",
+    "MCPServerConfig",
+    "MCPServerStatus",
+    "MCPTransportType",
+    "MCPToolDefinition",
+    "MCPResourceDefinition",
+    "MCPPromptDefinition",
+    "MCPListServersTool",
+    "MCPListToolsTool",
+    "MCPCallToolTool",
+    "MCPConnectTool",
+    "MCPDisconnectTool",
+    "get_mcp_manager",
+    "list_mcp_servers",
+    "list_mcp_tools",
+    "call_mcp_tool",
+    # Image Understanding (Phase 6)
+    "ImageData",
+    "ImageSource",
+    "ImageInfo",
+    "ImageAnalyzer",
+    "ImageReadTool",
+    "ImageAnalyzeTool",
+    "ImageCompareTool",
+    "ImageToBase64Tool",
+    "ImageFromUrlTool",
+    "get_image_analyzer",
+    "set_image_analyzer",
+    "create_vision_callback",
+    "read_image",
+    "analyze_image",
+    "compare_images",
+    # Jupyter Notebook Support (Phase 6)
+    "Notebook",
+    "NotebookCell",
+    "CellType",
+    "NotebookExecutor",
+    "NotebookReadTool",
+    "NotebookEditTool",
+    "NotebookAddCellTool",
+    "NotebookRemoveCellTool",
+    "NotebookExecuteTool",
+    "NotebookCreateTool",
+    "NotebookToPythonTool",
+    "NotebookClearOutputsTool",
+    "get_notebook_executor",
+    "read_notebook",
+    "edit_notebook_cell",
+    "execute_notebook",
+    "create_notebook",
 ]

@@ -202,18 +202,36 @@ class OllamaProvider(LLMProvider):
 
                             if data.get("done"):
                                 # Final response with tool calls
+                                final_content = "".join(content_buffer)
                                 final_tool_calls = self._build_tool_calls(tool_calls_buffer)
+
+                                # Fallback: parse tool calls from content if none found
+                                if not final_tool_calls and final_content:
+                                    parsed = self._try_parse_json_tool_call(final_content)
+                                    if parsed:
+                                        final_tool_calls = parsed
+                                        final_content = ""
+
                                 data_queue.put(LLMResponse(
-                                    content="".join(content_buffer),
+                                    content=final_content,
                                     tool_calls=final_tool_calls,
                                     done=True,
                                 ))
                                 return
 
                 # Stream ended without done=True
+                final_content = "".join(content_buffer)
                 final_tool_calls = self._build_tool_calls(tool_calls_buffer)
+
+                # Fallback: parse tool calls from content if none found
+                if not final_tool_calls and final_content:
+                    parsed = self._try_parse_json_tool_call(final_content)
+                    if parsed:
+                        final_tool_calls = parsed
+                        final_content = ""
+
                 data_queue.put(LLMResponse(
-                    content="".join(content_buffer),
+                    content=final_content,
                     tool_calls=final_tool_calls,
                     done=True,
                 ))
@@ -240,8 +258,8 @@ class OllamaProvider(LLMProvider):
         try:
             while True:
                 try:
-                    # Wait for data with short timeout to allow ESC checking
-                    response = data_queue.get(timeout=0.1)
+                    # Wait for data with very short timeout for responsive ESC checking
+                    response = data_queue.get(timeout=0.02)  # 20ms for responsive ESC
                     yield response
                     if response.done:
                         return
@@ -329,11 +347,102 @@ class OllamaProvider(LLMProvider):
                     arguments=args if isinstance(args, dict) else {},
                 ))
 
+        # Fallback: Try to parse tool calls from content if no native tool calls
+        if not tool_calls and content:
+            parsed = self._try_parse_json_tool_call(content)
+            if parsed:
+                tool_calls = parsed
+                content = ""  # Clear content since it was a tool call
+
         return LLMResponse(
             content=content,
             tool_calls=tool_calls,
             done=True,
         )
+
+    def _try_parse_json_tool_call(self, content: str) -> list[ToolCall]:
+        """
+        Try to parse tool calls from JSON in content.
+
+        Some models output tool calls as JSON text instead of using native format.
+        This fallback detects and parses those.
+        """
+        import re
+
+        tool_calls = []
+        content = content.strip()
+
+        # Quick check - if it doesn't look like JSON, skip
+        if not (content.startswith("{") or content.startswith("[")):
+            # Check for embedded JSON
+            if '{"name"' not in content and '{"tool"' not in content:
+                return tool_calls
+
+        # Try to parse the whole content as JSON first
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict):
+                name = data.get("name") or data.get("tool") or data.get("function")
+                args = data.get("arguments") or data.get("args") or data.get("parameters") or data.get("input") or {}
+                if name:
+                    tool_calls.append(ToolCall(
+                        id=f"text_call_0",
+                        name=name,
+                        arguments=args if isinstance(args, dict) else {},
+                    ))
+                    return tool_calls
+            elif isinstance(data, list):
+                # Handle array of tool calls
+                for idx, item in enumerate(data):
+                    if isinstance(item, dict):
+                        name = item.get("name") or item.get("tool") or item.get("function")
+                        args = item.get("arguments") or item.get("args") or item.get("parameters") or item.get("input") or {}
+                        if name:
+                            tool_calls.append(ToolCall(
+                                id=f"text_call_{idx}",
+                                name=name,
+                                arguments=args if isinstance(args, dict) else {},
+                            ))
+                return tool_calls
+        except json.JSONDecodeError:
+            pass
+
+        # Try to find embedded JSON objects that look like tool calls
+        json_pattern = r'\{[^{}]*"(?:name|tool|function)"[^{}]*:[^{}]*"[^"]+?"[^}]*\}'
+        matches = re.findall(json_pattern, content, re.DOTALL)
+        for idx, match in enumerate(matches):
+            try:
+                # Try to complete the JSON if it has nested braces
+                data = json.loads(match)
+                name = data.get("name") or data.get("tool") or data.get("function")
+                args = data.get("arguments") or data.get("args") or data.get("parameters") or data.get("input") or {}
+                if name:
+                    tool_calls.append(ToolCall(
+                        id=f"text_call_{idx}",
+                        name=name,
+                        arguments=args if isinstance(args, dict) else {},
+                    ))
+            except json.JSONDecodeError:
+                continue
+
+        return tool_calls
+
+    def _is_json_tool_response(self, content: str) -> bool:
+        """Check if content looks like a JSON tool call that should not be displayed."""
+        content = content.strip()
+        if not content:
+            return False
+
+        # Quick patterns that indicate JSON tool output
+        if content.startswith("{") and ('"name"' in content or '"tool"' in content or '"function"' in content):
+            try:
+                data = json.loads(content)
+                if isinstance(data, dict) and (data.get("name") or data.get("tool") or data.get("function")):
+                    return True
+            except json.JSONDecodeError:
+                pass
+
+        return False
 
 
 def get_provider(

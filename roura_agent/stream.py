@@ -32,7 +32,7 @@ class StreamResult:
 
 
 def check_for_escape() -> bool:
-    """Check if ESC key was pressed (non-blocking)."""
+    """Check if ESC key was pressed (non-blocking, drains buffer)."""
     if not sys.stdin.isatty():
         return False
 
@@ -41,11 +41,17 @@ def check_for_escape() -> bool:
         old_settings = termios.tcgetattr(fd)
         try:
             tty.setcbreak(fd)
-            # Non-blocking check
-            if select.select([sys.stdin], [], [], 0.01)[0]:
+            # Drain all pending input and check for ESC
+            found_escape = False
+            while select.select([sys.stdin], [], [], 0)[0]:
                 char = sys.stdin.read(1)
                 if char == '\x1b':  # ESC
-                    return True
+                    found_escape = True
+                    # Drain any remaining escape sequence chars
+                    while select.select([sys.stdin], [], [], 0.01)[0]:
+                        sys.stdin.read(1)
+                    break
+            return found_escape
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
     except Exception:
@@ -121,7 +127,7 @@ def stream_chat_live(
     with Live(
         Spinner("dots", text="Thinking...", style="cyan"),
         console=console,
-        refresh_per_second=15,
+        refresh_per_second=20,
         transient=True,
     ) as live:
         try:
@@ -240,7 +246,7 @@ def stream_generate_live(
     with Live(
         Spinner("dots", text="Thinking...", style="cyan"),
         console=console,
-        refresh_per_second=15,
+        refresh_per_second=20,
         transient=True,
     ) as live:
         try:

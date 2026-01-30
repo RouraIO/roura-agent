@@ -10,11 +10,15 @@ import sys
 import json
 import typer
 from pathlib import Path
-from rich.console import Console
+from typing import Optional
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.prompt import Prompt, Confirm
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.live import Live
+from rich.status import Status
 
 from .ollama import list_models, get_base_url, get_model
 from .tools.doctor import run_all_checks, format_results, has_critical_failures
@@ -38,24 +42,52 @@ from .safety import SafetyMode, BlastRadiusLimits
 # Import these to ensure tools are registered
 from .tools import github, jira
 
-app = typer.Typer(invoke_without_command=True)
-fs_app = typer.Typer(help="Filesystem tools")
-git_app = typer.Typer(help="Git tools")
-shell_app = typer.Typer(help="Shell tools")
+# Version callback for --version flag
+def version_callback(value: bool):
+    if value:
+        console.print(f"[bold cyan]Roura Agent[/bold cyan] version [green]{VERSION}[/green]")
+        raise typer.Exit()
+
+app = typer.Typer(
+    invoke_without_command=True,
+    rich_markup_mode="rich",
+    no_args_is_help=False,
+)
+fs_app = typer.Typer(help="[bold]Filesystem tools[/bold] - read, write, edit files")
+git_app = typer.Typer(help="[bold]Git tools[/bold] - status, diff, log, add, commit")
+shell_app = typer.Typer(help="[bold]Shell tools[/bold] - execute commands")
+mcp_app = typer.Typer(help="[bold]MCP tools[/bold] - Model Context Protocol servers")
+image_app = typer.Typer(help="[bold]Image tools[/bold] - read and analyze images")
+notebook_app = typer.Typer(help="[bold]Notebook tools[/bold] - Jupyter notebook operations")
+memory_app = typer.Typer(help="[bold]Memory tools[/bold] - store and recall notes")
+
 app.add_typer(fs_app, name="fs")
 app.add_typer(git_app, name="git")
 app.add_typer(shell_app, name="shell")
+app.add_typer(mcp_app, name="mcp")
+app.add_typer(image_app, name="image")
+app.add_typer(notebook_app, name="notebook")
+app.add_typer(memory_app, name="memory")
+
 console = Console()
 
 
 @app.callback()
 def main(
     ctx: typer.Context,
+    version: bool = typer.Option(
+        None,
+        "--version",
+        "-V",
+        callback=version_callback,
+        is_eager=True,
+        help="Show version and exit",
+    ),
     provider: str = typer.Option(
         None,
         "--provider",
         "-p",
-        help="LLM provider: ollama, openai, anthropic (auto-detect if not set)",
+        help="LLM provider: [cyan]ollama[/cyan], [green]openai[/green], [magenta]anthropic[/magenta]",
         envvar="ROURA_PROVIDER",
     ),
     safe_mode: bool = typer.Option(
@@ -99,9 +131,18 @@ def main(
     ),
 ):
     """
-    Roura Agent - Local-first AI coding assistant by Roura.io.
+    [bold cyan]Roura Agent[/bold cyan] - Local-first AI coding assistant by [bold]Roura.io[/bold].
+
+    Run without arguments to start the interactive agent.
+
+    [dim]Examples:[/dim]
+      roura-agent                    Start interactive agent
+      roura-agent --safe-mode        Start with dangerous tools disabled
+      roura-agent doctor             Run system health check
+      roura-agent tools              List all available tools
+      roura-agent fs read file.py    Read a file
+      roura-agent git status         Show git status
     """
-    from typing import Optional
 
     # Store options in context for subcommands
     ctx.ensure_object(dict)
@@ -170,37 +211,12 @@ def _run_agent(
     config, creds = get_effective_config()
     apply_config_to_env(config, creds)
 
-    # Display logo with version
+    # Display logo
     console.print(get_logo())
 
-    # Display tier indicator
-    tier_display = get_tier_display()
-    console.print(f"  {tier_display}")
-    console.print()
-
-    # Display mode indicators
-    modes = []
+    # Handle safe mode early
     if safe_mode:
         _enable_safe_mode()
-        modes.append(f"[{Colors.WARNING}]{Icons.LOCK} Safe Mode[/{Colors.WARNING}]")
-    if dry_run:
-        modes.append(f"[{Colors.INFO}]{Icons.INFO} Dry-Run Mode[/{Colors.INFO}]")
-    if readonly:
-        modes.append(f"[{Colors.ERROR}]{Icons.FORBIDDEN} Read-Only Mode[/{Colors.ERROR}]")
-
-    if modes:
-        console.print(" • ".join(modes))
-
-    # Display file pattern restrictions
-    if allow:
-        patterns = ", ".join(allow)
-        console.print(f"[dim]Allowed patterns: {patterns}[/dim]")
-    if block:
-        patterns = ", ".join(block)
-        console.print(f"[dim]Blocked patterns: {patterns}[/dim]")
-
-    if modes or allow or block:
-        console.print()
 
     # Determine provider type
     provider_type = None
@@ -215,11 +231,21 @@ def _run_agent(
             console.print(f"[red]Error:[/red] Unknown provider '{provider}'")
             console.print("[dim]Available: ollama, openai, anthropic[/dim]")
             raise typer.Exit(1)
+    else:
+        # Try to use last provider
+        from .onboarding import get_last_provider
+        last_provider = get_last_provider()
+        if last_provider:
+            provider_map = {
+                "ollama": ProviderType.OLLAMA,
+                "openai": ProviderType.OPENAI,
+                "anthropic": ProviderType.ANTHROPIC,
+            }
+            provider_type = provider_map.get(last_provider.lower())
 
     # Get provider instance
     try:
         llm_provider = get_provider(provider_type)
-        provider_display = f"{llm_provider.provider_type.value} ({llm_provider.model_name})"
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         console.print("[dim]Run 'roura-agent setup' to configure, or set environment variables:[/dim]")
@@ -227,25 +253,78 @@ def _run_agent(
         console.print("[dim]  Or ensure Ollama is running with OLLAMA_MODEL set[/dim]")
         raise typer.Exit(1)
 
-    # Show available providers
-    available = detect_available_providers()
-    available_str = ", ".join(p.value for p in available)
-
-    # Detect project
+    # Detect project and get tier
     project = detect_project()
+    tier_display = get_tier_display()
+    available = detect_available_providers()
 
-    # Show config and project info
-    console.print(f"[dim]Provider: {provider_display}[/dim]")
-    if len(available) > 1:
-        console.print(f"[dim]Available: {available_str}[/dim]")
-    console.print(f"[bold cyan]Project:[/bold cyan] {project.name} [dim]({project.type})[/dim]")
-    if project.git_branch:
-        console.print(f"[dim]Branch: {project.git_branch} • {len(project.files)} files[/dim]")
+    # Build info panel with two sections
+    from rich.columns import Columns
+
+    # Left section: Model & Session info
+    left_section = (
+        f"[{Colors.PRIMARY}]Model[/{Colors.PRIMARY}]     {llm_provider.model_name}\n"
+        f"[{Colors.PRIMARY}]Provider[/{Colors.PRIMARY}]  {llm_provider.provider_type.value}\n"
+        f"[{Colors.PRIMARY}]Available[/{Colors.PRIMARY}] {', '.join(p.value for p in available)}"
+    )
+
+    # Right section: Project & path info
+    # Shorten the cwd path for display
+    cwd = str(project.root)
+    home = str(Path.home())
+    if cwd.startswith(home):
+        cwd_display = "~" + cwd[len(home):]
+    else:
+        cwd_display = cwd
+    # Truncate if too long
+    if len(cwd_display) > 35:
+        cwd_display = "..." + cwd_display[-32:]
+
+    branch_display = project.git_branch if project.git_branch else "—"
+
+    right_section = (
+        f"[{Colors.PRIMARY}]Path[/{Colors.PRIMARY}]     {cwd_display}\n"
+        f"[{Colors.PRIMARY}]Branch[/{Colors.PRIMARY}]   {branch_display}\n"
+        f"[{Colors.PRIMARY}]Files[/{Colors.PRIMARY}]    {len(project.files)} ({project.type})"
+    )
+
+    # Create two-column layout
+    info_table = Table.grid(padding=(0, 4))
+    info_table.add_column(justify="left")
+    info_table.add_column(justify="left")
+    info_table.add_row(left_section, right_section)
+
+    # Commands hint
+    commands_hint = f"\n[{Colors.DIM}]/help[/{Colors.DIM}] commands  │  [{Colors.DIM}]/model[/{Colors.DIM}] switch  │  [{Colors.DIM}]ESC[/{Colors.DIM}] interrupt  │  [{Colors.DIM}]exit[/{Colors.DIM}] quit"
+
+    console.print(Panel(
+        Group(info_table, Text.from_markup(commands_hint)),
+        title=f"[{Colors.PRIMARY_BOLD}]{Icons.ROCKET} Roura Agent v{VERSION}[/{Colors.PRIMARY_BOLD}]",
+        subtitle=f"[{Colors.DIM}]{tier_display}[/{Colors.DIM}]",
+        border_style=Colors.BORDER_PRIMARY,
+    ))
+
+    # Show mode indicators if any
+    modes = []
+    if safe_mode:
+        modes.append(f"[{Colors.WARNING}]{Icons.LOCK} Safe Mode[/{Colors.WARNING}]")
+    if dry_run:
+        modes.append(f"[{Colors.INFO}]{Icons.INFO} Dry-Run[/{Colors.INFO}]")
+    if readonly:
+        modes.append(f"[{Colors.ERROR}]{Icons.FORBIDDEN} Read-Only[/{Colors.ERROR}]")
+    if allow:
+        modes.append(f"[{Colors.DIM}]Allow: {', '.join(allow)}[/{Colors.DIM}]")
+    if block:
+        modes.append(f"[{Colors.DIM}]Block: {', '.join(block)}[/{Colors.DIM}]")
+
+    if modes:
+        console.print(" • ".join(modes))
+
     console.print()
 
     # Run agent
     loop_config = LoopConfig(
-        max_tool_calls_per_turn=3,
+        max_tool_calls_per_turn=20,
         require_approval_moderate=True,
         require_approval_dangerous=True,
         stream_responses=True,
@@ -449,6 +528,73 @@ def setup():
 
     console.print("\n[bold green]Setup complete![/bold green]")
     console.print("[dim]Run 'roura-agent' to start.[/dim]")
+
+
+@app.command()
+def reset(
+    force: bool = typer.Option(False, "--force", "-y", help="Skip confirmation"),
+):
+    """Factory reset - clear all settings and restart onboarding."""
+    from .onboarding import ONBOARDING_MARKER, GLOBAL_ENV_FILE, WALKTHROUGH_MARKER, LAST_PROVIDER_FILE
+
+    console.print(Panel(
+        "[bold yellow]Factory Reset[/bold yellow]\n\n"
+        "This will:\n"
+        f"  • Delete onboarding marker ({ONBOARDING_MARKER})\n"
+        f"  • Delete walkthrough marker ({WALKTHROUGH_MARKER})\n"
+        f"  • Delete last provider setting\n"
+        f"  • Delete global .env file ({GLOBAL_ENV_FILE})\n"
+        f"  • Delete config file ({CONFIG_FILE})\n"
+        f"  • Delete credentials file ({CREDENTIALS_FILE})\n\n"
+        "[dim]You'll go through the first-time setup and walkthrough again on next run.[/dim]",
+        title="[yellow]⚠ Warning[/yellow]",
+        border_style="yellow",
+    ))
+
+    if not force:
+        if not Confirm.ask("\n[yellow]Are you sure you want to reset?[/yellow]", default=False):
+            console.print("[dim]Reset cancelled[/dim]")
+            raise typer.Exit(0)
+
+    deleted = []
+
+    # Delete onboarding marker
+    if ONBOARDING_MARKER.exists():
+        ONBOARDING_MARKER.unlink()
+        deleted.append("onboarding marker")
+
+    # Delete walkthrough marker
+    if WALKTHROUGH_MARKER.exists():
+        WALKTHROUGH_MARKER.unlink()
+        deleted.append("walkthrough marker")
+
+    # Delete last provider setting
+    if LAST_PROVIDER_FILE.exists():
+        LAST_PROVIDER_FILE.unlink()
+        deleted.append("last provider")
+
+    # Delete global .env
+    if GLOBAL_ENV_FILE.exists():
+        GLOBAL_ENV_FILE.unlink()
+        deleted.append("global .env")
+
+    # Delete config
+    if CONFIG_FILE.exists():
+        CONFIG_FILE.unlink()
+        deleted.append("config")
+
+    # Delete credentials
+    if CREDENTIALS_FILE.exists():
+        CREDENTIALS_FILE.unlink()
+        deleted.append("credentials")
+
+    if deleted:
+        console.print(f"\n[green]✓[/green] Deleted: {', '.join(deleted)}")
+    else:
+        console.print("\n[dim]Nothing to delete - already clean[/dim]")
+
+    console.print("\n[bold green]Reset complete![/bold green]")
+    console.print("[dim]Run 'roura-agent' to start fresh.[/dim]")
 
 
 @app.command()
@@ -930,6 +1076,475 @@ def shell_exec_cmd(
             console.print(output["stderr"])
 
 
+# --- MCP Tools ---
+
+
+@mcp_app.command("servers")
+def mcp_servers_cmd(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """List all configured MCP servers."""
+    from .tools.mcp import get_mcp_manager
+
+    manager = get_mcp_manager()
+    status = manager.get_status()
+
+    if json_output:
+        print(json.dumps(status, indent=2))
+    else:
+        if not status["servers"]:
+            console.print("[dim]No MCP servers configured[/dim]")
+            console.print("\n[dim]Add servers via config file or mcp.connect tool[/dim]")
+            return
+
+        table = Table(title="MCP Servers")
+        table.add_column("Name", style="cyan")
+        table.add_column("Status", justify="center")
+        table.add_column("Tools", justify="right")
+        table.add_column("Resources", justify="right")
+
+        for name, info in status["servers"].items():
+            status_color = {
+                "connected": "green",
+                "connecting": "yellow",
+                "disconnected": "dim",
+                "error": "red",
+            }.get(info["status"], "white")
+            status_text = f"[{status_color}]{info['status']}[/{status_color}]"
+            table.add_row(name, status_text, str(info["tools"]), str(info["resources"]))
+
+        console.print(table)
+        console.print(f"\n[dim]Total tools: {status['total_tools']}[/dim]")
+
+
+@mcp_app.command("tools")
+def mcp_tools_cmd(
+    server: str = typer.Option(None, "--server", "-s", help="Filter by server name"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """List all available MCP tools."""
+    from .tools.mcp import get_mcp_manager
+
+    manager = get_mcp_manager()
+    tools = manager.get_all_tools()
+
+    if server:
+        tools = [t for t in tools if t.server_name == server]
+
+    if json_output:
+        output = [{"name": t.name, "description": t.description, "server": t.server_name} for t in tools]
+        print(json.dumps(output, indent=2))
+    else:
+        if not tools:
+            console.print("[dim]No MCP tools available[/dim]")
+            return
+
+        table = Table(title="MCP Tools")
+        table.add_column("Tool", style="cyan")
+        table.add_column("Server", style="dim")
+        table.add_column("Description")
+
+        for tool in tools:
+            table.add_row(tool.name, tool.server_name, tool.description or "")
+
+        console.print(table)
+
+
+@mcp_app.command("connect")
+def mcp_connect_cmd(
+    name: str = typer.Argument(..., help="Name of the server to connect"),
+):
+    """Connect to an MCP server."""
+    from .tools.mcp import get_mcp_manager, MCPServerStatus
+
+    manager = get_mcp_manager()
+    server = manager.get_server(name)
+
+    if not server:
+        console.print(f"[red]Error:[/red] Server '{name}' not found")
+        raise typer.Exit(code=1)
+
+    with console.status(f"[bold cyan]Connecting to {name}...[/bold cyan]", spinner="dots"):
+        success = server.connect()
+
+    if success and server.status == MCPServerStatus.CONNECTED:
+        console.print(f"[green]✓[/green] Connected to {name}")
+        console.print(f"[dim]Available: {len(server.tools)} tools, {len(server.resources)} resources[/dim]")
+    else:
+        console.print(f"[red]✗[/red] Failed to connect to {name}")
+        if server.error:
+            console.print(f"[red]Error:[/red] {server.error}")
+        raise typer.Exit(code=1)
+
+
+@mcp_app.command("disconnect")
+def mcp_disconnect_cmd(
+    name: str = typer.Argument(..., help="Name of the server to disconnect"),
+):
+    """Disconnect from an MCP server."""
+    from .tools.mcp import get_mcp_manager
+
+    manager = get_mcp_manager()
+    server = manager.get_server(name)
+
+    if not server:
+        console.print(f"[red]Error:[/red] Server '{name}' not found")
+        raise typer.Exit(code=1)
+
+    server.disconnect()
+    console.print(f"[green]✓[/green] Disconnected from {name}")
+
+
+# --- Image Tools ---
+
+
+@image_app.command("read")
+def image_read_cmd(
+    path: str = typer.Argument(..., help="Path to the image file"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Read and display information about an image."""
+    from .tools.image import read_image
+
+    with console.status("[bold cyan]Reading image...[/bold cyan]", spinner="dots"):
+        result = read_image(path=path)
+
+    if not result.success:
+        console.print(f"[red]Error:[/red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        print(json.dumps(result.output, indent=2))
+    else:
+        info = result.output
+        console.print(Panel(
+            f"[bold]Path:[/bold] {info['path']}\n"
+            f"[bold]Format:[/bold] {info['format']}\n"
+            f"[bold]Size:[/bold] {info['width']}x{info['height']} pixels\n"
+            f"[bold]File size:[/bold] {info['file_size']} bytes",
+            title="Image Info",
+            border_style="cyan",
+        ))
+
+
+@image_app.command("analyze")
+def image_analyze_cmd(
+    path: str = typer.Argument(..., help="Path to the image file"),
+    prompt: str = typer.Option("Describe this image in detail", "--prompt", "-p", help="Analysis prompt"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Analyze an image using vision AI."""
+    from .tools.image import analyze_image
+
+    with console.status("[bold cyan]Analyzing image...[/bold cyan]", spinner="dots"):
+        result = analyze_image(path=path, prompt=prompt)
+
+    if not result.success:
+        console.print(f"[red]Error:[/red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        print(json.dumps(result.output, indent=2))
+    else:
+        console.print(Panel(
+            result.output.get("analysis", "No analysis available"),
+            title="Image Analysis",
+            border_style="cyan",
+        ))
+
+
+@image_app.command("compare")
+def image_compare_cmd(
+    path1: str = typer.Argument(..., help="Path to first image"),
+    path2: str = typer.Argument(..., help="Path to second image"),
+    prompt: str = typer.Option("Compare these images and describe the differences", "--prompt", "-p"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Compare two images using vision AI."""
+    from .tools.image import compare_images
+
+    with console.status("[bold cyan]Comparing images...[/bold cyan]", spinner="dots"):
+        result = compare_images(path1=path1, path2=path2, prompt=prompt)
+
+    if not result.success:
+        console.print(f"[red]Error:[/red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        print(json.dumps(result.output, indent=2))
+    else:
+        console.print(Panel(
+            result.output.get("comparison", "No comparison available"),
+            title="Image Comparison",
+            border_style="cyan",
+        ))
+
+
+# --- Notebook Tools ---
+
+
+@notebook_app.command("read")
+def notebook_read_cmd(
+    path: str = typer.Argument(..., help="Path to the Jupyter notebook"),
+    cell: int = typer.Option(None, "--cell", "-c", help="Show only a specific cell (1-indexed)"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Read a Jupyter notebook."""
+    from .tools.notebook import read_notebook
+
+    result = read_notebook(path=path)
+
+    if not result.success:
+        console.print(f"[red]Error:[/red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        print(json.dumps(result.output, indent=2))
+    else:
+        nb = result.output
+        console.print(f"[bold]{nb['path']}[/bold]")
+        console.print(f"[dim]{nb['cell_count']} cells, {nb['code_cells']} code, {nb['markdown_cells']} markdown[/dim]")
+        console.print()
+
+        cells = nb["cells"]
+        if cell is not None:
+            if 1 <= cell <= len(cells):
+                cells = [cells[cell - 1]]
+            else:
+                console.print(f"[red]Error:[/red] Cell {cell} not found (notebook has {len(cells)} cells)")
+                raise typer.Exit(code=1)
+
+        for i, c in enumerate(cells, 1 if cell is None else cell):
+            cell_type_color = "green" if c["cell_type"] == "code" else "blue"
+            console.print(f"[{cell_type_color}]In [{i}]:[/{cell_type_color}] ({c['cell_type']})")
+            console.print(c["source"])
+            if c.get("outputs"):
+                console.print(f"[dim]Out [{i}]:[/dim]")
+                for out in c["outputs"][:3]:
+                    console.print(f"  {out.get('text', str(out)[:100])}")
+            console.print()
+
+
+@notebook_app.command("create")
+def notebook_create_cmd(
+    path: str = typer.Argument(..., help="Path for the new notebook"),
+    kernel: str = typer.Option("python3", "--kernel", "-k", help="Kernel name"),
+    force: bool = typer.Option(False, "--force", "-y", help="Overwrite if exists"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Create a new Jupyter notebook."""
+    from .tools.notebook import create_notebook
+
+    if Path(path).exists() and not force:
+        console.print(f"[red]Error:[/red] File already exists: {path}")
+        console.print("[dim]Use --force to overwrite[/dim]")
+        raise typer.Exit(code=1)
+
+    result = create_notebook(path=path, kernel_name=kernel)
+
+    if not result.success:
+        console.print(f"[red]Error:[/red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        print(json.dumps(result.output, indent=2))
+    else:
+        console.print(f"[green]✓[/green] Created notebook: {result.output['path']}")
+
+
+@notebook_app.command("execute")
+def notebook_execute_cmd(
+    path: str = typer.Argument(..., help="Path to the Jupyter notebook"),
+    cell: int = typer.Option(None, "--cell", "-c", help="Execute only a specific cell (1-indexed)"),
+    timeout: int = typer.Option(60, "--timeout", "-t", help="Execution timeout per cell in seconds"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Execute a Jupyter notebook."""
+    from .tools.notebook import execute_notebook
+
+    with console.status("[bold cyan]Executing notebook...[/bold cyan]", spinner="dots"):
+        if cell is not None:
+            result = execute_notebook(path=path, cell_index=cell - 1, timeout=timeout)
+        else:
+            result = execute_notebook(path=path, timeout=timeout)
+
+    if not result.success:
+        console.print(f"[red]Error:[/red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        print(json.dumps(result.output, indent=2))
+    else:
+        output = result.output
+        executed = output.get("executed_cells", output.get("executed", 1))
+        console.print(f"[green]✓[/green] Executed {executed} cell(s)")
+        if output.get("outputs"):
+            console.print("\n[bold]Outputs:[/bold]")
+            for out in output["outputs"][:5]:
+                console.print(f"  {out}")
+
+
+# --- Memory Tools ---
+
+
+@memory_app.command("store")
+def memory_store_cmd(
+    content: str = typer.Argument(..., help="Content to store"),
+    tags: list[str] = typer.Option(None, "--tag", "-t", help="Tags for the note (can repeat)"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Store a note in memory."""
+    from .tools.memory import store_note
+
+    result = store_note(content=content, tags=tags or [])
+
+    if not result.success:
+        console.print(f"[red]Error:[/red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        print(json.dumps(result.output, indent=2))
+    else:
+        console.print(f"[green]✓[/green] Stored note: {result.output['id']}")
+        if tags:
+            console.print(f"[dim]Tags: {', '.join(tags)}[/dim]")
+
+
+@memory_app.command("recall")
+def memory_recall_cmd(
+    query: str = typer.Argument(None, help="Search query (optional)"),
+    tags: list[str] = typer.Option(None, "--tag", "-t", help="Filter by tags (can repeat)"),
+    limit: int = typer.Option(10, "--limit", "-n", help="Maximum notes to return"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Recall notes from memory."""
+    from .tools.memory import recall_notes
+
+    result = recall_notes(query=query, tags=tags or [], limit=limit)
+
+    if not result.success:
+        console.print(f"[red]Error:[/red] {result.error}")
+        raise typer.Exit(code=1)
+
+    if json_output:
+        print(json.dumps(result.output, indent=2))
+    else:
+        notes = result.output.get("notes", [])
+        if not notes:
+            console.print("[dim]No notes found[/dim]")
+            return
+
+        console.print(f"[bold]Found {len(notes)} note(s):[/bold]\n")
+        for note in notes:
+            console.print(f"[cyan]{note['id']}[/cyan] [dim]({note.get('timestamp', 'unknown')})[/dim]")
+            if note.get("tags"):
+                console.print(f"  Tags: {', '.join(note['tags'])}")
+            console.print(f"  {note['content'][:200]}{'...' if len(note.get('content', '')) > 200 else ''}")
+            console.print()
+
+
+@memory_app.command("clear")
+def memory_clear_cmd(
+    force: bool = typer.Option(False, "--force", "-y", help="Skip confirmation"),
+):
+    """Clear all notes from memory."""
+    from .tools.memory import clear_memory
+
+    if not force:
+        if not _confirm("Clear all memory?"):
+            console.print("[red]Cancelled[/red]")
+            raise typer.Exit(code=0)
+
+    result = clear_memory()
+
+    if not result.success:
+        console.print(f"[red]Error:[/red] {result.error}")
+        raise typer.Exit(code=1)
+
+    console.print(f"[green]✓[/green] Memory cleared ({result.output.get('deleted', 0)} notes removed)")
+
+
+# --- Additional Commands ---
+
+
+@app.command()
+def status():
+    """Show system status overview."""
+    from .tools.base import registry, RiskLevel
+
+    # Provider status
+    console.print("[bold cyan]System Status[/bold cyan]\n")
+
+    # Check providers
+    console.print("[bold]Providers:[/bold]")
+    from .llm import detect_available_providers, ProviderType
+    available = detect_available_providers()
+    for pt in ProviderType:
+        status = "[green]✓[/green]" if pt in available else "[dim]✗[/dim]"
+        console.print(f"  {status} {pt.value}")
+
+    # Tool counts
+    console.print(f"\n[bold]Tools:[/bold] {len(registry._tools)} registered")
+    risk_counts = {}
+    for tool in registry._tools.values():
+        risk_counts[tool.risk_level] = risk_counts.get(tool.risk_level, 0) + 1
+    for risk, count in sorted(risk_counts.items(), key=lambda x: x[0].value):
+        color = get_risk_color(risk.value)
+        console.print(f"  [{color}]{risk.value}[/{color}]: {count}")
+
+    # MCP servers
+    from .tools.mcp import get_mcp_manager
+    manager = get_mcp_manager()
+    servers = manager.list_servers()
+    console.print(f"\n[bold]MCP Servers:[/bold] {len(servers)}")
+    for srv in servers:
+        status_color = "green" if srv.status.value == "connected" else "dim"
+        console.print(f"  [{status_color}]{srv.name}[/{status_color}]: {srv.status.value}")
+
+    # Project info
+    project = detect_project()
+    console.print(f"\n[bold]Project:[/bold] {project.name}")
+    console.print(f"  Type: {project.type}")
+    console.print(f"  Files: {len(project.files)}")
+    if project.git_branch:
+        console.print(f"  Branch: {project.git_branch}")
+
+
+@app.command()
+def completion(
+    shell: str = typer.Argument(..., help="Shell type: bash, zsh, fish, powershell"),
+):
+    """Generate shell completion script."""
+    import subprocess
+
+    shell_map = {
+        "bash": "bash",
+        "zsh": "zsh",
+        "fish": "fish",
+        "powershell": "powershell",
+        "ps": "powershell",
+    }
+
+    shell_type = shell_map.get(shell.lower())
+    if not shell_type:
+        console.print(f"[red]Error:[/red] Unknown shell type: {shell}")
+        console.print("[dim]Supported: bash, zsh, fish, powershell[/dim]")
+        raise typer.Exit(code=1)
+
+    # Typer's built-in completion
+    console.print(f"[dim]# Add this to your ~/.{shell_type}rc or equivalent:[/dim]")
+    console.print()
+
+    if shell_type == "bash":
+        console.print('eval "$(roura-agent --show-completion bash)"')
+    elif shell_type == "zsh":
+        console.print('eval "$(roura-agent --show-completion zsh)"')
+    elif shell_type == "fish":
+        console.print("roura-agent --show-completion fish | source")
+    elif shell_type == "powershell":
+        console.print("roura-agent --show-completion powershell | Out-String | Invoke-Expression")
+
+
 # --- Helper Functions ---
 
 
@@ -948,6 +1563,51 @@ def _confirm(prompt: str) -> bool:
     except (EOFError, KeyboardInterrupt):
         console.print("\n[red]Aborted[/red]")
         return False
+
+
+def _error_panel(title: str, message: str, suggestion: str = None) -> None:
+    """Display an error in a styled panel."""
+    content = f"[red]{message}[/red]"
+    if suggestion:
+        content += f"\n\n[dim]Suggestion: {suggestion}[/dim]"
+    console.print(Panel(
+        content,
+        title=f"[red]Error: {title}[/red]",
+        border_style="red",
+    ))
+
+
+def _success_panel(title: str, message: str) -> None:
+    """Display a success message in a styled panel."""
+    console.print(Panel(
+        f"[green]{message}[/green]",
+        title=f"[green]{title}[/green]",
+        border_style="green",
+    ))
+
+
+def _warning_panel(title: str, message: str) -> None:
+    """Display a warning in a styled panel."""
+    console.print(Panel(
+        f"[yellow]{message}[/yellow]",
+        title=f"[yellow]Warning: {title}[/yellow]",
+        border_style="yellow",
+    ))
+
+
+def _info_panel(title: str, content: str) -> None:
+    """Display information in a styled panel."""
+    console.print(Panel(
+        content,
+        title=f"[cyan]{title}[/cyan]",
+        border_style="cyan",
+    ))
+
+
+def _run_with_spinner(func, message: str, *args, **kwargs):
+    """Run a function with a spinner, returning the result."""
+    with console.status(f"[bold cyan]{message}[/bold cyan]", spinner="dots"):
+        return func(*args, **kwargs)
 
 
 def _enable_safe_mode() -> None:

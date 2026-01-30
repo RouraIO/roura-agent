@@ -17,8 +17,8 @@ class Limits:
 
     # Agent loop limits
     MAX_ITERATIONS: int = 50
-    MAX_TOOL_CALLS_PER_TURN: int = 10
-    MAX_TOOL_CALLS_BEFORE_CHECK: int = 3
+    MAX_TOOL_CALLS_PER_TURN: int = 20
+    MAX_TOOL_CALLS_BEFORE_CHECK: int = 10
 
     # Context limits
     MAX_CONTEXT_TOKENS: int = 32000
@@ -198,8 +198,8 @@ class APIConstants:
 
 
 # Version info
-VERSION = "1.0.2"
-VERSION_TUPLE = (1, 0, 2)
+VERSION = "1.2.0"
+VERSION_TUPLE = (1, 2, 0)
 
 
 def get_version() -> str:

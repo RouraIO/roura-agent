@@ -1,5 +1,11 @@
 """
-Roura Agent Configuration - Secure credential storage and project detection.
+Roura Agent Configuration - Secure credential storage, project detection, and centralized config.
+
+Provides:
+- Secure credential storage
+- Project detection and analysis
+- Multi-source configuration (env, files, CLI)
+- Type-safe config access
 
 © Roura.io
 """
@@ -7,10 +13,16 @@ from __future__ import annotations
 
 import os
 import json
+import logging
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
-from typing import Optional
+from typing import Any, Optional, TypeVar, Generic, Callable
+from enum import Enum
 import stat
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar('T')
 
 
 # Config locations
@@ -520,3 +532,657 @@ def get_project_context_prompt(project: ProjectInfo) -> str:
             lines.append(f"- {f}")
 
     return "\n".join(lines)
+
+
+# =============================================================================
+# Centralized Configuration System
+# =============================================================================
+
+
+class ConfigSource(Enum):
+    """Configuration source priority (lower = higher priority)."""
+    CLI = 1           # Command line arguments (highest priority)
+    ENV = 2           # Environment variables
+    PROJECT = 3       # Project-local config (.roura/config.toml)
+    USER = 4          # User config (~/.config/roura/config.toml)
+    GLOBAL = 5        # Global/system config
+    DEFAULT = 6       # Built-in defaults (lowest priority)
+
+
+@dataclass
+class ConfigValue(Generic[T]):
+    """A configuration value with metadata."""
+    value: T
+    source: ConfigSource
+    key: str
+    description: str = ""
+
+
+@dataclass
+class LLMConfig:
+    """LLM provider configuration."""
+    provider: str = "anthropic"
+    model: str = "claude-sonnet-4-20250514"
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    max_tokens: int = 4096
+    temperature: float = 0.7
+    timeout: float = 60.0
+    max_retries: int = 3
+
+
+@dataclass
+class ToolsConfig:
+    """Tools configuration."""
+    enabled: list[str] = field(default_factory=lambda: ["all"])
+    disabled: list[str] = field(default_factory=list)
+    require_approval: list[str] = field(default_factory=lambda: ["shell_exec", "fs_write", "git_commit"])
+    auto_approve_patterns: list[str] = field(default_factory=list)
+    timeout: float = 30.0
+
+
+@dataclass
+class MemoryConfig:
+    """Memory/RAG configuration."""
+    enabled: bool = True
+    storage_path: Optional[str] = None
+    max_entries: int = 1000
+    embedding_model: str = "default"
+    similarity_threshold: float = 0.7
+
+
+@dataclass
+class MCPConfig:
+    """MCP server configuration."""
+    enabled: bool = True
+    servers: dict[str, dict] = field(default_factory=dict)
+    auto_connect: list[str] = field(default_factory=list)
+    timeout: float = 30.0
+
+
+@dataclass
+class LoggingConfig:
+    """Logging configuration."""
+    level: str = "INFO"
+    format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    file: Optional[str] = None
+    json_format: bool = False
+    include_timestamps: bool = True
+
+
+@dataclass
+class UIConfig:
+    """User interface configuration."""
+    color: bool = True
+    spinner: bool = True
+    show_tokens: bool = False
+    show_cost: bool = False
+    compact_mode: bool = False
+    markdown_output: bool = True
+
+
+@dataclass
+class SecurityConfig:
+    """Security configuration."""
+    allow_network: bool = True
+    allow_shell: bool = True
+    sandbox_mode: bool = False
+    allowed_paths: list[str] = field(default_factory=list)
+    blocked_paths: list[str] = field(default_factory=lambda: ["/etc", "/var", "/usr"])
+    max_file_size: int = 10 * 1024 * 1024  # 10MB
+
+
+@dataclass
+class RouraConfig:
+    """Main configuration container for centralized config system."""
+    llm: LLMConfig = field(default_factory=LLMConfig)
+    tools: ToolsConfig = field(default_factory=ToolsConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    mcp: MCPConfig = field(default_factory=MCPConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    ui: UIConfig = field(default_factory=UIConfig)
+    security: SecurityConfig = field(default_factory=SecurityConfig)
+
+    # Project info
+    project_root: Optional[str] = None
+    project_name: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert config to dictionary."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RouraConfig":
+        """Create config from dictionary."""
+        config = cls()
+
+        if "llm" in data:
+            config.llm = LLMConfig(**data["llm"])
+        if "tools" in data:
+            config.tools = ToolsConfig(**data["tools"])
+        if "memory" in data:
+            config.memory = MemoryConfig(**data["memory"])
+        if "mcp" in data:
+            config.mcp = MCPConfig(**data["mcp"])
+        if "logging" in data:
+            config.logging = LoggingConfig(**data["logging"])
+        if "ui" in data:
+            config.ui = UIConfig(**data["ui"])
+        if "security" in data:
+            config.security = SecurityConfig(**data["security"])
+        if "project_root" in data:
+            config.project_root = data["project_root"]
+        if "project_name" in data:
+            config.project_name = data["project_name"]
+
+        return config
+
+
+def _load_toml(path: Path) -> dict[str, Any]:
+    """Load configuration from TOML file."""
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib  # type: ignore
+
+    with open(path, "rb") as f:
+        return tomllib.load(f)
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    """Load configuration from JSON file."""
+    with open(path) as f:
+        return json.load(f)
+
+
+def _load_yaml(path: Path) -> dict[str, Any]:
+    """Load configuration from YAML file."""
+    try:
+        import yaml
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+    except ImportError:
+        raise ImportError("PyYAML is required for YAML config files: pip install pyyaml")
+
+
+def load_config_file(path: Path) -> dict[str, Any]:
+    """Load configuration from file based on extension."""
+    if not path.exists():
+        return {}
+
+    suffix = path.suffix.lower()
+
+    if suffix == ".toml":
+        return _load_toml(path)
+    elif suffix == ".json":
+        return _load_json(path)
+    elif suffix in (".yaml", ".yml"):
+        return _load_yaml(path)
+    else:
+        raise ValueError(f"Unsupported config file format: {suffix}")
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Deep merge two dictionaries, override takes precedence."""
+    result = base.copy()
+
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+
+    return result
+
+
+def _env_to_config(prefix: str = "ROURA_") -> dict[str, Any]:
+    """Extract configuration from environment variables."""
+    config: dict[str, Any] = {}
+
+    env_mapping = {
+        # LLM
+        f"{prefix}LLM_PROVIDER": ("llm", "provider"),
+        f"{prefix}LLM_MODEL": ("llm", "model"),
+        f"{prefix}LLM_API_KEY": ("llm", "api_key"),
+        f"{prefix}LLM_BASE_URL": ("llm", "base_url"),
+        f"{prefix}LLM_MAX_TOKENS": ("llm", "max_tokens", int),
+        f"{prefix}LLM_TEMPERATURE": ("llm", "temperature", float),
+        f"{prefix}LLM_TIMEOUT": ("llm", "timeout", float),
+        # Also support common API key env vars
+        "ANTHROPIC_API_KEY": ("llm", "api_key"),
+        "OPENAI_API_KEY": ("llm", "api_key"),
+        # Logging
+        f"{prefix}LOG_LEVEL": ("logging", "level"),
+        f"{prefix}LOG_FILE": ("logging", "file"),
+        f"{prefix}LOG_JSON": ("logging", "json_format", lambda x: x.lower() == "true"),
+        # UI
+        f"{prefix}COLOR": ("ui", "color", lambda x: x.lower() != "false"),
+        f"{prefix}SPINNER": ("ui", "spinner", lambda x: x.lower() != "false"),
+        f"{prefix}SHOW_TOKENS": ("ui", "show_tokens", lambda x: x.lower() == "true"),
+        f"{prefix}SHOW_COST": ("ui", "show_cost", lambda x: x.lower() == "true"),
+        # Security
+        f"{prefix}ALLOW_NETWORK": ("security", "allow_network", lambda x: x.lower() != "false"),
+        f"{prefix}ALLOW_SHELL": ("security", "allow_shell", lambda x: x.lower() != "false"),
+        f"{prefix}SANDBOX_MODE": ("security", "sandbox_mode", lambda x: x.lower() == "true"),
+        # Memory
+        f"{prefix}MEMORY_ENABLED": ("memory", "enabled", lambda x: x.lower() != "false"),
+        f"{prefix}MEMORY_PATH": ("memory", "storage_path"),
+        # MCP
+        f"{prefix}MCP_ENABLED": ("mcp", "enabled", lambda x: x.lower() != "false"),
+    }
+
+    for env_var, mapping in env_mapping.items():
+        value = os.environ.get(env_var)
+        if value is not None:
+            section, key = mapping[0], mapping[1]
+            converter = mapping[2] if len(mapping) > 2 else str
+
+            if section not in config:
+                config[section] = {}
+
+            try:
+                config[section][key] = converter(value)  # type: ignore
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Invalid value for {env_var}: {value} - {e}")
+
+    return config
+
+
+class ConfigManager:
+    """
+    Centralized configuration manager.
+
+    Loads configuration from multiple sources in priority order:
+    1. CLI arguments (highest)
+    2. Environment variables
+    3. Project config (.roura/config.toml)
+    4. User config (~/.config/roura/config.toml)
+    5. Built-in defaults (lowest)
+
+    Example:
+        config = ConfigManager()
+        config.load()
+
+        # Access config values
+        model = config.get("llm.model")
+        api_key = config.get("llm.api_key")
+
+        # Get typed config objects
+        llm_config = config.llm
+        tools_config = config.tools
+    """
+
+    # Standard config file locations
+    USER_CONFIG_DIR = Path.home() / ".config" / "roura"
+    PROJECT_CONFIG_DIR = ".roura"
+    CONFIG_FILENAMES = ["config.toml", "config.json", "config.yaml", "config.yml"]
+
+    def __init__(self, project_root: Optional[Path] = None):
+        self._project_root = project_root or Path.cwd()
+        self._config = RouraConfig()
+        self._sources: dict[str, ConfigSource] = {}
+        self._cli_overrides: dict[str, Any] = {}
+        self._loaded = False
+
+    @property
+    def config(self) -> RouraConfig:
+        """Get the current configuration."""
+        if not self._loaded:
+            self.load()
+        return self._config
+
+    @property
+    def llm(self) -> LLMConfig:
+        """Get LLM configuration."""
+        return self.config.llm
+
+    @property
+    def tools(self) -> ToolsConfig:
+        """Get tools configuration."""
+        return self.config.tools
+
+    @property
+    def memory(self) -> MemoryConfig:
+        """Get memory configuration."""
+        return self.config.memory
+
+    @property
+    def mcp(self) -> MCPConfig:
+        """Get MCP configuration."""
+        return self.config.mcp
+
+    @property
+    def logging_config(self) -> LoggingConfig:
+        """Get logging configuration."""
+        return self.config.logging
+
+    @property
+    def ui(self) -> UIConfig:
+        """Get UI configuration."""
+        return self.config.ui
+
+    @property
+    def security(self) -> SecurityConfig:
+        """Get security configuration."""
+        return self.config.security
+
+    def set_cli_override(self, key: str, value: Any) -> None:
+        """Set a CLI override (highest priority)."""
+        self._cli_overrides[key] = value
+        self._apply_overrides()
+
+    def _find_config_file(self, directory: Path) -> Optional[Path]:
+        """Find a config file in the given directory."""
+        for filename in self.CONFIG_FILENAMES:
+            path = directory / filename
+            if path.exists():
+                return path
+        return None
+
+    def _find_project_root(self) -> Optional[Path]:
+        """Find the project root by looking for .roura, .git, or pyproject.toml."""
+        current = self._project_root
+
+        while current != current.parent:
+            # Check for .roura directory
+            if (current / self.PROJECT_CONFIG_DIR).exists():
+                return current
+            # Check for .git
+            if (current / ".git").exists():
+                return current
+            # Check for pyproject.toml
+            if (current / "pyproject.toml").exists():
+                return current
+            current = current.parent
+
+        return self._project_root
+
+    def load(self, reload: bool = False) -> RouraConfig:
+        """
+        Load configuration from all sources.
+
+        Args:
+            reload: Force reload even if already loaded
+
+        Returns:
+            The loaded configuration
+        """
+        if self._loaded and not reload:
+            return self._config
+
+        # Start with defaults
+        config_data: dict[str, Any] = {}
+
+        # Find project root
+        project_root = self._find_project_root()
+
+        # 1. Load user config (lowest priority after defaults)
+        user_config_file = self._find_config_file(self.USER_CONFIG_DIR)
+        if user_config_file:
+            try:
+                user_data = load_config_file(user_config_file)
+                config_data = _deep_merge(config_data, user_data)
+                self._record_sources(user_data, ConfigSource.USER)
+                logger.debug(f"Loaded user config from {user_config_file}")
+            except Exception as e:
+                logger.warning(f"Failed to load user config: {e}")
+
+        # 2. Load project config
+        if project_root:
+            project_config_dir = project_root / self.PROJECT_CONFIG_DIR
+            project_config_file = self._find_config_file(project_config_dir)
+            if project_config_file:
+                try:
+                    project_data = load_config_file(project_config_file)
+                    config_data = _deep_merge(config_data, project_data)
+                    self._record_sources(project_data, ConfigSource.PROJECT)
+                    logger.debug(f"Loaded project config from {project_config_file}")
+                except Exception as e:
+                    logger.warning(f"Failed to load project config: {e}")
+
+        # 3. Load environment variables
+        env_data = _env_to_config()
+        if env_data:
+            config_data = _deep_merge(config_data, env_data)
+            self._record_sources(env_data, ConfigSource.ENV)
+
+        # 4. Apply CLI overrides (highest priority)
+        if self._cli_overrides:
+            cli_data = self._flatten_to_nested(self._cli_overrides)
+            config_data = _deep_merge(config_data, cli_data)
+            self._record_sources(cli_data, ConfigSource.CLI)
+
+        # Set project info
+        if project_root:
+            config_data["project_root"] = str(project_root)
+            config_data["project_name"] = project_root.name
+
+        # Build final config
+        self._config = RouraConfig.from_dict(config_data)
+        self._loaded = True
+
+        return self._config
+
+    def _record_sources(self, data: dict[str, Any], source: ConfigSource, prefix: str = "") -> None:
+        """Record the source of each config value."""
+        for key, value in data.items():
+            full_key = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, dict):
+                self._record_sources(value, source, full_key)
+            else:
+                self._sources[full_key] = source
+
+    def _flatten_to_nested(self, flat: dict[str, Any]) -> dict[str, Any]:
+        """Convert flat dotted keys to nested dict."""
+        result: dict[str, Any] = {}
+
+        for key, value in flat.items():
+            parts = key.split(".")
+            current = result
+
+            for part in parts[:-1]:
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+
+            current[parts[-1]] = value
+
+        return result
+
+    def _apply_overrides(self) -> None:
+        """Apply CLI overrides to loaded config."""
+        if self._loaded:
+            cli_data = self._flatten_to_nested(self._cli_overrides)
+            config_data = self._config.to_dict()
+            config_data = _deep_merge(config_data, cli_data)
+            self._config = RouraConfig.from_dict(config_data)
+            # Record sources for CLI overrides
+            self._record_sources(cli_data, ConfigSource.CLI)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Get a config value by dotted key.
+
+        Args:
+            key: Dotted key path (e.g., "llm.model")
+            default: Default value if not found
+
+        Returns:
+            The config value
+        """
+        if not self._loaded:
+            self.load()
+
+        parts = key.split(".")
+        value: Any = self._config.to_dict()
+
+        for part in parts:
+            if isinstance(value, dict) and part in value:
+                value = value[part]
+            else:
+                return default
+
+        return value
+
+    def get_source(self, key: str) -> Optional[ConfigSource]:
+        """Get the source of a config value."""
+        return self._sources.get(key)
+
+    def validate(self) -> list[str]:
+        """
+        Validate the current configuration.
+
+        Returns:
+            List of validation errors (empty if valid)
+        """
+        errors: list[str] = []
+
+        # Validate LLM config
+        if not self._config.llm.provider:
+            errors.append("llm.provider is required")
+
+        if self._config.llm.max_tokens < 1:
+            errors.append("llm.max_tokens must be positive")
+
+        if not 0 <= self._config.llm.temperature <= 2:
+            errors.append("llm.temperature must be between 0 and 2")
+
+        # Validate tools config
+        if self._config.tools.timeout <= 0:
+            errors.append("tools.timeout must be positive")
+
+        # Validate memory config
+        if self._config.memory.max_entries < 1:
+            errors.append("memory.max_entries must be positive")
+
+        if not 0 <= self._config.memory.similarity_threshold <= 1:
+            errors.append("memory.similarity_threshold must be between 0 and 1")
+
+        # Validate security config
+        if self._config.security.max_file_size < 1:
+            errors.append("security.max_file_size must be positive")
+
+        return errors
+
+    def save_user_config(self, overwrite: bool = False) -> Path:
+        """
+        Save current configuration to user config file.
+
+        Args:
+            overwrite: Overwrite existing config
+
+        Returns:
+            Path to saved config file
+        """
+        config_dir = self.USER_CONFIG_DIR
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        config_file = config_dir / "config.toml"
+
+        if config_file.exists() and not overwrite:
+            raise FileExistsError(f"Config already exists: {config_file}")
+
+        # Convert to TOML format
+        try:
+            import tomli_w
+            with open(config_file, "wb") as f:
+                tomli_w.dump(self._config.to_dict(), f)
+        except ImportError:
+            # Fallback to JSON
+            config_file = config_dir / "config.json"
+            with open(config_file, "w") as f:
+                json.dump(self._config.to_dict(), f, indent=2)
+
+        logger.info(f"Saved config to {config_file}")
+        return config_file
+
+    def init_project_config(self, path: Optional[Path] = None) -> Path:
+        """
+        Initialize a project configuration file.
+
+        Args:
+            path: Project root (defaults to current directory)
+
+        Returns:
+            Path to created config file
+        """
+        project_root = path or self._project_root
+        config_dir = project_root / self.PROJECT_CONFIG_DIR
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        config_file = config_dir / "config.toml"
+
+        if config_file.exists():
+            raise FileExistsError(f"Project config already exists: {config_file}")
+
+        # Create minimal project config
+        project_config = {
+            "project_name": project_root.name,
+            "llm": {
+                "model": self._config.llm.model,
+            },
+            "tools": {
+                "require_approval": self._config.tools.require_approval,
+            },
+        }
+
+        try:
+            import tomli_w
+            with open(config_file, "wb") as f:
+                tomli_w.dump(project_config, f)
+        except ImportError:
+            config_file = config_dir / "config.json"
+            with open(config_file, "w") as f:
+                json.dump(project_config, f, indent=2)
+
+        logger.info(f"Initialized project config at {config_file}")
+        return config_file
+
+    def show(self, show_secrets: bool = False) -> dict[str, Any]:
+        """
+        Get configuration for display.
+
+        Args:
+            show_secrets: Include sensitive values like API keys
+
+        Returns:
+            Configuration dict with secrets optionally masked
+        """
+        config = self._config.to_dict()
+
+        if not show_secrets:
+            # Mask sensitive values
+            sensitive_keys = ["api_key", "token", "secret", "password"]
+
+            def mask_sensitive(d: dict) -> dict:
+                result = {}
+                for k, v in d.items():
+                    if isinstance(v, dict):
+                        result[k] = mask_sensitive(v)
+                    elif any(s in k.lower() for s in sensitive_keys) and v:
+                        result[k] = "***"
+                    else:
+                        result[k] = v
+                return result
+
+            config = mask_sensitive(config)
+
+        return config
+
+
+# Global config manager instance
+_config_manager: Optional[ConfigManager] = None
+
+
+def get_config_manager() -> ConfigManager:
+    """Get the global configuration manager."""
+    global _config_manager
+    if _config_manager is None:
+        _config_manager = ConfigManager()
+    return _config_manager
+
+
+def reset_config_manager() -> None:
+    """Reset the global configuration manager."""
+    global _config_manager
+    _config_manager = None

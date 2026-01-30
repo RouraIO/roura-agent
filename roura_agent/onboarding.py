@@ -37,6 +37,12 @@ GLOBAL_ENV_FILE = Path.home() / ".config" / "roura-agent" / ".env"
 # Marker file to track if onboarding has been completed
 ONBOARDING_MARKER = Path.home() / ".config" / "roura-agent" / ".onboarded"
 
+# Marker file to track if walkthrough has been shown
+WALKTHROUGH_MARKER = Path.home() / ".config" / "roura-agent" / ".walkthrough_seen"
+
+# File to store last used provider
+LAST_PROVIDER_FILE = Path.home() / ".config" / "roura-agent" / ".last_provider"
+
 # Stripe payment URLs
 STRIPE_URLS = {
     "pro_monthly": "https://buy.stripe.com/3cI28r8zl0tG92b6Cb5kk00",
@@ -78,6 +84,33 @@ def mark_onboarding_complete() -> None:
     """Mark that onboarding has been completed."""
     ONBOARDING_MARKER.parent.mkdir(parents=True, exist_ok=True)
     ONBOARDING_MARKER.touch()
+
+
+def is_walkthrough_seen() -> bool:
+    """Check if the walkthrough has been shown before."""
+    return WALKTHROUGH_MARKER.exists()
+
+
+def mark_walkthrough_seen() -> None:
+    """Mark that the walkthrough has been shown."""
+    WALKTHROUGH_MARKER.parent.mkdir(parents=True, exist_ok=True)
+    WALKTHROUGH_MARKER.touch()
+
+
+def get_last_provider() -> Optional[str]:
+    """Get the last used provider name."""
+    if LAST_PROVIDER_FILE.exists():
+        try:
+            return LAST_PROVIDER_FILE.read_text().strip()
+        except Exception:
+            pass
+    return None
+
+
+def save_last_provider(provider: str) -> None:
+    """Save the last used provider name."""
+    LAST_PROVIDER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LAST_PROVIDER_FILE.write_text(provider)
 
 
 def load_env_file(path: Path) -> dict[str, str]:

@@ -45,6 +45,7 @@ from ..stream import check_for_escape
 from ..errors import RouraError, ErrorCode
 from ..branding import Colors, Icons, Styles, format_error
 from ..session import SessionManager, Session
+from ..agents import Orchestrator, get_registry, initialize_agents
 
 
 class AgentState(Enum):
@@ -61,12 +62,17 @@ class AgentState(Enum):
 class AgentConfig:
     """Agent configuration."""
     max_iterations: int = 50
-    max_tool_calls_per_turn: int = 10
+    max_tool_calls_per_turn: int = 20
     require_approval_moderate: bool = True
     require_approval_dangerous: bool = True
     auto_read_on_modify: bool = True
     stream_responses: bool = True
     show_tool_results: bool = True
+    multi_agent_mode: bool = True  # Enable orchestrator delegation (on by default)
+    # Smart escalation: use more powerful models when local model struggles
+    escalation_enabled: bool = True
+    escalation_providers: list = None  # Fallback providers in order (e.g., ["openai", "anthropic"])
+    escalation_prompt_user: bool = True  # Ask before escalating
 
 
 class AgentLoop:
@@ -85,45 +91,29 @@ class AgentLoop:
         agent.process("Fix the bug in main.py")  # Single request
     """
 
-    BASE_SYSTEM_PROMPT = """You are Roura Agent, a powerful local-first AI coding assistant created by Roura.io.
+    BASE_SYSTEM_PROMPT = """You are Roura Agent, a friendly AI coding assistant running locally on the user's machine.
 
-You operate in an agentic loop: you can use tools to accomplish tasks, see the results, and continue working until the task is complete. You are not limited to a single response - you can execute multiple tools and reason about results iteratively.
+PERSONALITY: Be conversational, helpful, and concise. Talk like a knowledgeable colleague, not a formal assistant. Use casual language. Never output JSON or structured data as your response - always respond in natural language.
 
-## Your Capabilities
-- Read and understand code in any language
-- Write, edit, and create files
-- Run shell commands
-- Git operations (status, diff, commit, etc.)
-- GitHub and Jira integrations (when configured)
+HOW YOU WORK:
+- Use tools silently to gather info, then respond naturally
+- Never show tool calls or JSON to the user - just describe what you found/did
+- When exploring code, summarize insights rather than dumping raw output
+- If something fails, adapt and try alternatives without complaining
 
-## How You Work
-1. When given a task, think about what information you need
-2. Use tools to gather information (read files, list directories, etc.)
-3. Analyze the results and decide on next steps
-4. Make changes using appropriate tools
-5. Verify your changes if needed
-6. Report back when done
+CRITICAL RULES:
+1. NEVER output JSON as a response. If you need to call a tool, just call it.
+2. Discover files with fs.list before reading them - don't guess paths
+3. Read files before modifying them
+4. Keep responses brief and natural - no numbered lists unless asked
+5. Do the work, then share results conversationally
 
-## Available Tools
-You have access to tools via native function calling. The tools will be provided in the API request. Key tools include:
-- fs.read: Read file contents
-- fs.list: List directory contents
-- fs.write: Write/create files
-- fs.edit: Edit files with search/replace
-- git.status, git.diff, git.log: Git information
-- git.add, git.commit: Git modifications
-- shell.exec: Run shell commands
+When reviewing a project:
+1. Start with fs.list to see the structure
+2. Read key files (README, main entry points, configs)
+3. Provide a helpful summary of what you found
 
-## Important Rules
-1. ALWAYS read a file before modifying it - never guess at contents
-2. When editing, use precise search/replace patterns that match exactly
-3. For multi-step tasks, work through them systematically
-4. If a tool fails, analyze the error and try a different approach
-5. Be concise in your responses but thorough in your work
-6. Ask for clarification if the task is ambiguous
-
-## Project Context
-You are working in a project directory. Reference files by their path relative to the project root."""
+Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.log, git.add, git.commit, shell.exec"""
 
     def __init__(
         self,
@@ -145,6 +135,12 @@ You are working in a project directory. Reference files by their path relative t
         self._summarizer = ContextSummarizer()
         self._session_manager = SessionManager()
         self._current_session: Optional[Session] = None
+        self._orchestrator: Optional[Orchestrator] = None
+        self._current_agent: Optional[str] = None  # Track which agent is working
+
+        # Initialize orchestrator if multi-agent mode is enabled
+        if self.config.multi_agent_mode:
+            self._orchestrator = initialize_agents(console=self.console)
 
         # Build system prompt with project context
         system_prompt = self.BASE_SYSTEM_PROMPT
@@ -169,6 +165,27 @@ You are working in a project directory. Reference files by their path relative t
         """Set the provider type before first use."""
         self._provider_type = provider_type
         self._llm = None  # Clear cached provider
+
+    def enable_multi_agent(self) -> None:
+        """Enable multi-agent orchestration mode."""
+        if self.config.multi_agent_mode and self._orchestrator:
+            self.console.print(f"[{Colors.DIM}]Multi-agent mode already enabled[/{Colors.DIM}]")
+            return
+
+        self.config.multi_agent_mode = True
+        if not self._orchestrator:
+            self._orchestrator = initialize_agents(console=self.console)
+        self.console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS}[/{Colors.SUCCESS}] Multi-agent mode enabled")
+        agents = get_registry().list_agents()
+        self.console.print(f"[{Colors.DIM}]Available agents: {', '.join(a.name.title() for a in agents)}[/{Colors.DIM}]")
+
+    def disable_multi_agent(self) -> None:
+        """Disable multi-agent mode."""
+        self.config.multi_agent_mode = False
+        self._orchestrator = None
+        self._current_agent = None
+        get_registry().clear()
+        self.console.print(f"[{Colors.DIM}]Multi-agent mode disabled[/{Colors.DIM}]")
 
     def _get_tools_schema(self) -> list[dict]:
         """Get JSON Schema for all registered tools."""
@@ -449,12 +466,24 @@ You are working in a project directory. Reference files by their path relative t
         max_retries = 3
         retry_delay = 2.0  # seconds
 
-        def get_thinking_display() -> Text:
-            """Get thinking spinner with elapsed time."""
+        def get_thinking_display() -> Group:
+            """Get thinking spinner with elapsed time and agent info."""
             elapsed = time.time() - start_time
-            return Text.from_markup(
-                f"[{Colors.PRIMARY}]{Icons.THINKING}[/{Colors.PRIMARY}] Thinking... [{Colors.DIM}]({elapsed:.1f}s)[/{Colors.DIM}]"
-            )
+            spinner = Spinner("dots", style=Colors.PRIMARY)
+            if self._current_agent:
+                text = Text.from_markup(
+                    f" [{Colors.INFO}]{self._current_agent}[/{Colors.INFO}] thinking... "
+                    f"[{Colors.DIM}]({elapsed:.1f}s)[/{Colors.DIM}]"
+                )
+            else:
+                text = Text.from_markup(
+                    f" Thinking... [{Colors.DIM}]({elapsed:.1f}s)[/{Colors.DIM}]"
+                )
+            # Combine spinner and text
+            from rich.table import Table
+            t = Table.grid()
+            t.add_row(spinner, text)
+            return t
 
         def get_retry_display(attempt: int, error: str) -> Text:
             """Get retry status display."""
@@ -467,7 +496,7 @@ You are working in a project directory. Reference files by their path relative t
             with Live(
                 get_thinking_display(),
                 console=self.console,
-                refresh_per_second=10,
+                refresh_per_second=20,  # Higher refresh for responsive ESC
                 transient=True,
             ) as live:
                 try:
@@ -486,15 +515,24 @@ You are working in a project directory. Reference files by their path relative t
                         if response.content:
                             content_buffer = response.content
 
-                            # Update display with cursor and elapsed time
-                            elapsed = time.time() - start_time
-                            display = Text()
-                            display.append(content_buffer)
-                            display.append(Icons.CURSOR_BLOCK, style=Colors.PRIMARY_BOLD)
-                            hint = Text.from_markup(
-                                f"\n\n[{Colors.DIM}]{elapsed:.1f}s | Press ESC to interrupt[/{Colors.DIM}]"
+                            # Don't display content that looks like a JSON tool call
+                            # (some models output tool calls as text)
+                            stripped = content_buffer.strip()
+                            looks_like_json_tool = (
+                                (stripped.startswith("{") or stripped.startswith("[")) and
+                                ('"name"' in stripped or '"tool"' in stripped or '"function"' in stripped or '"arguments"' in stripped)
                             )
-                            live.update(Group(display, hint))
+
+                            if not looks_like_json_tool:
+                                # Update display with cursor and elapsed time
+                                elapsed = time.time() - start_time
+                                display = Text()
+                                display.append(content_buffer)
+                                display.append(Icons.CURSOR_BLOCK, style=Colors.PRIMARY_BOLD)
+                                hint = Text.from_markup(
+                                    f"\n\n[{Colors.DIM}]{elapsed:.1f}s | Press ESC to interrupt[/{Colors.DIM}]"
+                                )
+                                live.update(Group(display, hint))
                         else:
                             # Still waiting for content - update timer
                             live.update(get_thinking_display())
@@ -575,15 +613,30 @@ You are working in a project directory. Reference files by their path relative t
 
         if response.error:
             self.console.print(f"\n[{Colors.ERROR}]{Icons.ERROR} {response.error}[/{Colors.ERROR}]")
+            # Check if we should offer escalation
+            if self._should_offer_escalation():
+                if self._offer_escalation("Model error - try a more powerful model?"):
+                    return True  # Retry with new model
             return False
 
         # Display text content if any
+        # But skip if it looks like a JSON tool call (some models output tool calls as text)
         if response.has_content:
-            self.console.print()
-            try:
-                self.console.print(Markdown(response.content))
-            except Exception:
-                self.console.print(response.content)
+            content = response.content.strip()
+            is_json_tool_call = (
+                (content.startswith("{") or content.startswith("[")) and
+                ('"name"' in content or '"tool"' in content or '"function"' in content or '"arguments"' in content)
+            )
+
+            # Also skip if we have tool calls and content looks like JSON
+            if response.has_tool_calls and is_json_tool_call:
+                pass  # Don't display JSON tool output
+            elif not is_json_tool_call:
+                self.console.print()
+                try:
+                    self.console.print(Markdown(response.content))
+                except Exception:
+                    self.console.print(response.content)
 
         # Add assistant message to context
         if response.has_content or response.has_tool_calls:
@@ -645,6 +698,70 @@ You are working in a project directory. Reference files by their path relative t
         # Continue the loop - LLM needs to process tool results
         return True
 
+    def _determine_agent(self, user_input: str) -> str:
+        """
+        Determine which agent should handle this task.
+
+        Uses the orchestrator to analyze the task and pick the best agent.
+        """
+        if not self._orchestrator:
+            return "roura"  # Default agent name
+
+        # Use orchestrator's task analysis
+        analysis = self._orchestrator._analyze_task(user_input)
+        agent_type = analysis.get("primary_type", "code")
+
+        # Map to display names
+        agent_names = {
+            "code": "Code Agent",
+            "test": "Test Agent",
+            "debug": "Debug Agent",
+            "research": "Research Agent",
+            "git": "Git Agent",
+            "review": "Review Agent",
+            "cursor": "Cursor Agent",
+            "xcode": "Xcode Agent",
+        }
+
+        return agent_names.get(agent_type, "Roura Agent")
+
+    def _enhance_with_project_context(self, user_input: str) -> str:
+        """
+        Enhance user input with project context if no specific files mentioned.
+
+        If the user says "review my code" without specifying files,
+        add context about the project structure.
+        """
+        import re
+
+        # Check if input mentions specific files
+        has_specific_files = bool(re.search(
+            r'\b[\w/\\]+\.(py|js|ts|tsx|jsx|go|rs|java|c|cpp|h|rb|php|swift|kt)\b',
+            user_input
+        ))
+
+        # Keywords that suggest user wants to work with the whole project
+        project_wide_keywords = [
+            r'\b(my|the|this)\s+(code|project|codebase|repo|repository)\b',
+            r'\breview\s+(my|the|this)?\s*(code|changes)?\b',
+            r'\banalyze\s+(my|the|this)?\s*(code|project)?\b',
+            r'\bcheck\s+(my|the|this)?\s*(code|project)?\b',
+            r'\bimprove\s+(my|the|this)?\s*(code|project)?\b',
+            r'\brefactor\b',
+            r'\bwhat\s+(does|is)\s+(this|my)\s+(project|code)\b',
+        ]
+
+        needs_project_context = any(
+            re.search(pattern, user_input.lower())
+            for pattern in project_wide_keywords
+        )
+
+        if needs_project_context and not has_specific_files and self.context.project_root:
+            # Add brief hint to explore first
+            return user_input + f"\n\n[Hint: Use fs.list to discover files first]"
+
+        return user_input
+
     def process(self, user_input: str) -> str:
         """
         Process a user request through the full agentic loop.
@@ -658,8 +775,14 @@ You are working in a project directory. Reference files by their path relative t
         self.config.require_approval_moderate = True
         self.config.require_approval_dangerous = True
 
+        # Determine which agent should handle this task
+        self._current_agent = self._determine_agent(user_input)
+
+        # Enhance input with project context if needed
+        enhanced_input = self._enhance_with_project_context(user_input)
+
         # Add user message
-        self.context.add_message("user", user_input)
+        self.context.add_message("user", enhanced_input)
 
         # Run the agentic loop
         final_content = ""
@@ -693,31 +816,16 @@ You are working in a project directory. Reference files by their path relative t
             pass  # Silent fail for auto-save
 
     def _show_turn_summary(self) -> None:
-        """Show summary of the completed turn including token usage."""
-        summary_parts = []
-
-        # Token usage
-        token_display, token_status = self.context.get_token_display()
-        if token_display:
-            if token_status == "warning":
-                token_str = f"[{Colors.WARNING}]{token_display}[/{Colors.WARNING}]"
-            elif token_status == "moderate":
-                token_str = f"[{Colors.INFO}]{token_display}[/{Colors.INFO}]"
-            else:
-                token_str = f"[{Colors.DIM}]{token_display}[/{Colors.DIM}]"
-            summary_parts.append(token_str)
-
-        # Iterations if multiple
-        if self.context.iteration > 1:
-            summary_parts.append(f"[{Colors.DIM}]{self.context.iteration} iterations[/{Colors.DIM}]")
-
-        # Files in context
-        if self.context.read_set:
-            summary_parts.append(f"[{Colors.DIM}]{len(self.context.read_set)} file(s)[/{Colors.DIM}]")
-
-        if summary_parts:
-            self.console.print()
-            self.console.print(" | ".join(summary_parts))
+        """Show brief summary of the completed turn."""
+        # Only show if multiple iterations or many files
+        if self.context.iteration > 2 or len(self.context.read_set) > 3:
+            parts = []
+            if self.context.iteration > 1:
+                parts.append(f"{self.context.iteration} turns")
+            if self.context.read_set:
+                parts.append(f"{len(self.context.read_set)} files")
+            if parts:
+                self.console.print(f"\n[{Colors.DIM}]{' | '.join(parts)}[/{Colors.DIM}]")
 
     def run(self) -> None:
         """Run the interactive REPL."""
@@ -750,59 +858,26 @@ You are working in a project directory. Reference files by their path relative t
                 model=llm.model_name,
             )
 
-        session_id = self._current_session.id[:8]
+        # Check for updates (non-blocking)
+        self._check_for_updates_notification()
 
-        # Get tier display
-        from ..onboarding import get_tier_display
-        tier_display = get_tier_display()
+        # Show walkthrough on first run
+        from ..onboarding import is_walkthrough_seen, mark_walkthrough_seen
+        if not is_walkthrough_seen():
+            self.console.print()
+            self._show_walkthrough()
+            mark_walkthrough_seen()
+        else:
+            self.console.print()
 
-        # Build session info box with split layout
-        # Left side: description, Right side: model/session info
-        from rich.columns import Columns
-        from rich.text import Text as RichText
-
-        left_content = (
-            f"[{Styles.HEADER}]Roura Agent[/{Styles.HEADER}]\n"
-            f"[{Colors.DIM}]Local AI Coding Assistant[/{Colors.DIM}]\n\n"
-            "I can read, write, and edit files,\n"
-            "run commands, and help with git.\n\n"
-            f"[{Colors.PRIMARY}]/help[/{Colors.PRIMARY}] commands  "
-            f"[{Colors.PRIMARY}]ESC[/{Colors.PRIMARY}] interrupt\n"
-            f"[{Colors.PRIMARY}]exit[/{Colors.PRIMARY}] quit     "
-            f"[{Colors.PRIMARY}]/upgrade[/{Colors.PRIMARY}] PRO"
-        )
-
-        right_content = (
-            f"[{Colors.PRIMARY}]Model[/{Colors.PRIMARY}]\n"
-            f"  {llm.model_name}\n\n"
-            f"[{Colors.PRIMARY}]Provider[/{Colors.PRIMARY}]\n"
-            f"  {llm.provider_type.value}\n\n"
-            f"[{Colors.PRIMARY}]Session[/{Colors.PRIMARY}]\n"
-            f"  {session_id}\n\n"
-            f"[{Colors.PRIMARY}]Tier[/{Colors.PRIMARY}]\n"
-            f"  {tier_display}"
-        )
-
-        # Create two-column layout
-        layout_table = Table.grid(padding=(0, 2))
-        layout_table.add_column(justify="left", ratio=3)
-        layout_table.add_column(justify="left", ratio=2)
-        layout_table.add_row(left_content, right_content)
-
-        self.console.print()
-        self.console.print(Panel(
-            layout_table,
-            title=f"[{Colors.PRIMARY_BOLD}]{Icons.ROCKET} Roura.io[/{Colors.PRIMARY_BOLD}]",
-            border_style=Colors.BORDER_PRIMARY,
-        ))
-        self.console.print()
+        # Setup prompt with tab completion
+        from ..prompt import prompt_input
 
         try:
             while True:
                 try:
-                    # Prompt
-                    prompt_text = "[bold cyan]>[/bold cyan] "
-                    user_input = self.console.input(prompt_text).strip()
+                    # Prompt with tab completion
+                    user_input = prompt_input("> ").strip()
 
                     if not user_input:
                         continue
@@ -868,6 +943,28 @@ You are working in a project directory. Reference files by their path relative t
                         self._manage_license()
                         continue
 
+                    if user_input.lower() in ("/agents",):
+                        self._show_agents()
+                        continue
+
+                    if user_input.lower() in ("/multi", "/orchestrator"):
+                        self._toggle_multi_agent()
+                        continue
+
+                    if user_input.lower().startswith("/model"):
+                        parts = user_input.split(maxsplit=1)
+                        provider_name = parts[1] if len(parts) > 1 else None
+                        self._switch_model(provider_name)
+                        continue
+
+                    if user_input.lower() in ("/update", "/upgrade-cli"):
+                        self._do_update()
+                        continue
+
+                    if user_input.lower() in ("/walkthrough", "/tutorial", "/tour"):
+                        self._show_walkthrough()
+                        continue
+
                     # Process request through agentic loop
                     self.process(user_input)
 
@@ -885,28 +982,168 @@ You are working in a project directory. Reference files by their path relative t
         """Show help information."""
         self.console.print(Panel(
             f"[{Styles.HEADER}]Commands:[/{Styles.HEADER}]\n"
-            f"  [{Colors.PRIMARY}]/help[/{Colors.PRIMARY}]     - Show this help\n"
-            f"  [{Colors.PRIMARY}]/context[/{Colors.PRIMARY}]  - Show loaded file context\n"
-            f"  [{Colors.PRIMARY}]/undo[/{Colors.PRIMARY}]     - Undo last file change\n"
-            f"  [{Colors.PRIMARY}]/clear[/{Colors.PRIMARY}]    - Clear conversation and context\n"
-            f"  [{Colors.PRIMARY}]/tools[/{Colors.PRIMARY}]    - List available tools\n"
-            f"  [{Colors.PRIMARY}]/keys[/{Colors.PRIMARY}]     - Show keyboard shortcuts\n"
-            f"  [{Colors.PRIMARY}]/upgrade[/{Colors.PRIMARY}]  - View pricing and upgrade to PRO\n"
-            f"  [{Colors.PRIMARY}]/license[/{Colors.PRIMARY}]  - View or enter license key\n"
-            f"  [{Colors.PRIMARY}]exit[/{Colors.PRIMARY}]      - Quit\n\n"
-            f"[{Styles.HEADER}]How I Work:[/{Styles.HEADER}]\n"
-            "  \u2022 I operate in an agentic loop\n"
-            "  \u2022 I can use tools, see results, and iterate\n"
-            "  \u2022 Press ESC to interrupt at any time\n"
-            "  \u2022 I'll ask for approval before risky operations\n\n"
+            f"  [{Colors.PRIMARY}]/walkthrough[/{Colors.PRIMARY}] - Interactive tutorial\n"
+            f"  [{Colors.PRIMARY}]/help[/{Colors.PRIMARY}]        - Show this help\n"
+            f"  [{Colors.PRIMARY}]/model[/{Colors.PRIMARY}]       - Switch LLM provider\n"
+            f"  [{Colors.PRIMARY}]/update[/{Colors.PRIMARY}]      - Check for updates\n"
+            f"  [{Colors.PRIMARY}]/context[/{Colors.PRIMARY}]     - Show loaded files\n"
+            f"  [{Colors.PRIMARY}]/undo[/{Colors.PRIMARY}]        - Undo last change\n"
+            f"  [{Colors.PRIMARY}]/clear[/{Colors.PRIMARY}]       - Clear conversation\n"
+            f"  [{Colors.PRIMARY}]exit[/{Colors.PRIMARY}]         - Quit\n\n"
+            f"[{Styles.HEADER}]Smart Escalation:[/{Styles.HEADER}]\n"
+            "  When using a local model (Ollama), if it struggles\n"
+            "  you'll be offered to escalate to Claude or GPT-4.\n\n"
             f"[{Styles.HEADER}]Tips:[/{Styles.HEADER}]\n"
-            "  \u2022 Be specific about what you want\n"
-            "  \u2022 I'll read files before editing them\n"
-            "  \u2022 Use /undo if I make an unwanted change\n"
-            "  \u2022 For complex tasks, I'll work through them step by step",
+            "  \u2022 ESC to interrupt at any time\n"
+            "  \u2022 I'll ask before risky operations\n"
+            "  \u2022 /undo to revert file changes",
             title=f"[{Styles.HEADER}]Help[/{Styles.HEADER}]",
             border_style=Colors.BORDER_INFO,
         ))
+
+    def _show_walkthrough(self) -> None:
+        """Interactive walkthrough of Roura Agent features."""
+        from rich.markdown import Markdown
+
+        steps = [
+            {
+                "title": "Welcome to Roura Agent!",
+                "content": """
+**Roura Agent** is your local AI coding assistant. Let me show you how to get the most out of it.
+
+**Key Concepts:**
+- I can read, write, and edit files in your project
+- I run shell commands and git operations
+- I work in a loop: use tools → see results → continue
+- Press **ESC** anytime to interrupt me
+
+*Press Enter to continue...*
+"""
+            },
+            {
+                "title": "Talking to Me",
+                "content": """
+**Just ask naturally!** Here are some examples:
+
+• "Read the main.py file and explain what it does"
+• "Find all TODO comments in this project"
+• "Fix the bug in the login function"
+• "Create a new test file for the User class"
+• "What does this codebase do?"
+
+**Tips:**
+- Be specific about what you want
+- I'll ask for clarification if needed
+- I'll show you diffs before making changes
+
+*Press Enter to continue...*
+"""
+            },
+            {
+                "title": "Slash Commands",
+                "content": """
+**Quick commands** start with `/` — press **Tab** for autocomplete!
+
+| Command | What it does |
+|---------|-------------|
+| `/help` | Show all commands |
+| `/model` | Switch AI provider (ollama/openai/anthropic) |
+| `/model anthropic` | Switch to Claude |
+| `/context` | See files I've read |
+| `/undo` | Revert my last file change |
+| `/update` | Check for updates |
+| `/clear` | Reset conversation |
+
+*Press Enter to continue...*
+"""
+            },
+            {
+                "title": "Multi-Model Power",
+                "content": """
+**Smart Escalation** — Use local models with cloud backup!
+
+When using Ollama (local), if I struggle with a task, I'll offer to escalate to **Claude** or **GPT-4**.
+
+**Switch models anytime:**
+```
+/model ollama      # Use local model
+/model anthropic   # Use Claude
+/model openai      # Use GPT-4
+```
+
+This lets you:
+- Use fast local models for simple tasks
+- Bring in powerful cloud models when needed
+- Control costs by choosing when to use paid APIs
+
+*Press Enter to continue...*
+"""
+            },
+            {
+                "title": "Safety & Approval",
+                "content": """
+**I ask before risky operations:**
+
+• **File writes** — I'll show a diff before changing files
+• **Shell commands** — I'll show the command and ask for approval
+• **Git operations** — Commits need your OK
+
+**Undo mistakes:**
+- `/undo` reverts my last file change
+- I keep a history of changes
+
+**Safe modes:**
+```bash
+roura-agent --readonly     # No file modifications
+roura-agent --dry-run      # Preview changes only
+roura-agent --safe-mode    # Disable shell commands
+```
+
+*Press Enter to continue...*
+"""
+            },
+            {
+                "title": "Pro Tips",
+                "content": """
+**Get more out of Roura Agent:**
+
+1. **Tab completion** — Type `/` and press Tab
+2. **History** — Use ↑/↓ arrows for previous commands
+3. **Search history** — Press Ctrl+R
+4. **Interrupt** — Press ESC to stop me mid-task
+5. **Context** — I remember files I've read in this session
+
+**Integrations (PRO):**
+- GitHub: `roura-agent` uses `gh` CLI
+- Jira: Set JIRA_URL, JIRA_EMAIL, JIRA_TOKEN
+
+**Reset anytime:**
+```bash
+roura-agent reset    # Factory reset, redo setup
+roura-agent setup    # Reconfigure settings
+```
+
+*Press Enter to finish!*
+"""
+            },
+        ]
+
+        self.console.print()
+
+        for i, step in enumerate(steps, 1):
+            self.console.print(Panel(
+                Markdown(step["content"]),
+                title=f"[{Colors.PRIMARY_BOLD}]{step['title']}[/{Colors.PRIMARY_BOLD}] [{Colors.DIM}]({i}/{len(steps)})[/{Colors.DIM}]",
+                border_style=Colors.BORDER_PRIMARY,
+            ))
+
+            try:
+                input()
+            except (EOFError, KeyboardInterrupt):
+                self.console.print(f"\n[{Colors.DIM}]Walkthrough ended[/{Colors.DIM}]")
+                return
+
+        self.console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS}[/{Colors.SUCCESS}] You're ready to go! Just type what you need help with.\n")
 
     def _show_context(self) -> None:
         """Show current context."""
@@ -1076,6 +1313,213 @@ You are working in a project directory. Reference files by their path relative t
             self.console.print(f"[{Colors.ERROR}]{Icons.ERROR} Invalid license key[/{Colors.ERROR}]")
 
         self.console.print()
+
+    def _show_agents(self) -> None:
+        """Show available agents in the multi-agent system."""
+        registry = get_registry()
+        agents = registry.list_agents()
+
+        if not agents:
+            self.console.print(f"[{Colors.DIM}]No agents registered. Use /multi to enable multi-agent mode.[/{Colors.DIM}]")
+            return
+
+        table = Table(title="Available Agents")
+        table.add_column("Agent", style=Colors.PRIMARY)
+        table.add_column("Description")
+        table.add_column("Capabilities", style=Colors.DIM)
+
+        for agent in agents:
+            caps = ", ".join(c.value for c in agent.capabilities[:3])
+            if len(agent.capabilities) > 3:
+                caps += f" +{len(agent.capabilities) - 3}"
+            table.add_row(agent.name, agent.description, caps)
+
+        self.console.print(table)
+
+        # Show orchestrator status
+        if self.config.multi_agent_mode:
+            self.console.print(f"\n[{Colors.SUCCESS}]{Icons.SUCCESS} Multi-agent mode: ON[/{Colors.SUCCESS}]")
+        else:
+            self.console.print(f"\n[{Colors.DIM}]Multi-agent mode: OFF (use /multi to enable)[/{Colors.DIM}]")
+
+    def _toggle_multi_agent(self) -> None:
+        """Toggle multi-agent orchestration mode."""
+        if self.config.multi_agent_mode:
+            self.disable_multi_agent()
+        else:
+            self.enable_multi_agent()
+
+    def _switch_model(self, provider_name: Optional[str] = None) -> None:
+        """Switch to a different LLM provider."""
+        from ..llm import detect_available_providers, get_provider, ProviderType
+
+        available = detect_available_providers()
+
+        if not provider_name:
+            # Show available providers
+            self.console.print(f"\n[{Styles.HEADER}]Available Models[/{Styles.HEADER}]")
+            current = self._llm.provider_type if self._llm else None
+            for pt in available:
+                marker = f"[{Colors.SUCCESS}]●[/{Colors.SUCCESS}]" if pt == current else f"[{Colors.DIM}]○[/{Colors.DIM}]"
+                self.console.print(f"  {marker} {pt.value}")
+            self.console.print(f"\n[{Colors.DIM}]Usage: /model <provider>[/{Colors.DIM}]")
+            return
+
+        # Map name to provider type
+        provider_map = {
+            "ollama": ProviderType.OLLAMA,
+            "openai": ProviderType.OPENAI,
+            "anthropic": ProviderType.ANTHROPIC,
+            "claude": ProviderType.ANTHROPIC,
+            "gpt": ProviderType.OPENAI,
+        }
+
+        provider_type = provider_map.get(provider_name.lower())
+        if not provider_type:
+            self.console.print(f"[{Colors.ERROR}]Unknown provider: {provider_name}[/{Colors.ERROR}]")
+            self.console.print(f"[{Colors.DIM}]Available: {', '.join(p.value for p in available)}[/{Colors.DIM}]")
+            return
+
+        if provider_type not in available:
+            self.console.print(f"[{Colors.ERROR}]{provider_type.value} is not configured[/{Colors.ERROR}]")
+            self.console.print(f"[{Colors.DIM}]Run 'roura-agent setup' or set API keys[/{Colors.DIM}]")
+            return
+
+        try:
+            self._llm = get_provider(provider_type)
+            self._provider_type = provider_type
+            self.console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS}[/{Colors.SUCCESS}] Switched to {self._llm.model_name}")
+
+            # Save as last used provider
+            from ..onboarding import save_last_provider
+            save_last_provider(provider_type.value)
+        except Exception as e:
+            self.console.print(f"[{Colors.ERROR}]Failed to switch: {e}[/{Colors.ERROR}]")
+
+    def _should_offer_escalation(self) -> bool:
+        """Check if we should offer to escalate to a more powerful model."""
+        if not self.config.escalation_enabled:
+            return False
+
+        # Only escalate from local models (Ollama)
+        if not self._llm or self._llm.provider_type != ProviderType.OLLAMA:
+            return False
+
+        # Check if we have escalation providers available
+        from ..llm import detect_available_providers
+        available = detect_available_providers()
+        return ProviderType.OPENAI in available or ProviderType.ANTHROPIC in available
+
+    def _offer_escalation(self, reason: str) -> bool:
+        """Offer to escalate to a more powerful model. Returns True if escalated."""
+        from ..llm import detect_available_providers, get_provider
+
+        if not self.config.escalation_prompt_user:
+            # Auto-escalate without prompting
+            return self._do_escalate()
+
+        available = detect_available_providers()
+        fallbacks = []
+        if ProviderType.ANTHROPIC in available:
+            fallbacks.append(("anthropic", "Claude"))
+        if ProviderType.OPENAI in available:
+            fallbacks.append(("openai", "GPT-4"))
+
+        if not fallbacks:
+            return False
+
+        # Show escalation prompt
+        self.console.print()
+        self.console.print(f"[{Colors.WARNING}]{Icons.WARNING} {reason}[/{Colors.WARNING}]")
+        self.console.print(f"[{Colors.DIM}]Available fallbacks: {', '.join(name for _, name in fallbacks)}[/{Colors.DIM}]")
+
+        try:
+            choices = [name.lower() for _, name in fallbacks] + ["no"]
+            response = Prompt.ask(
+                f"[{Colors.PRIMARY}]Escalate to[/{Colors.PRIMARY}]",
+                choices=choices,
+                default="no",
+            )
+
+            if response.lower() == "no":
+                return False
+
+            # Map response to provider
+            provider_map = {"claude": ProviderType.ANTHROPIC, "gpt-4": ProviderType.OPENAI}
+            provider_type = provider_map.get(response.lower())
+
+            if provider_type:
+                self._llm = get_provider(provider_type)
+                self._provider_type = provider_type
+                self.console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS}[/{Colors.SUCCESS}] Escalated to {self._llm.model_name}")
+                return True
+
+        except (EOFError, KeyboardInterrupt):
+            self.console.print(f"\n[{Colors.DIM}]Cancelled[/{Colors.DIM}]")
+
+        return False
+
+    def _do_escalate(self) -> bool:
+        """Auto-escalate to the first available powerful model."""
+        from ..llm import detect_available_providers, get_provider
+
+        available = detect_available_providers()
+
+        # Prefer Anthropic, then OpenAI
+        for provider_type in [ProviderType.ANTHROPIC, ProviderType.OPENAI]:
+            if provider_type in available:
+                try:
+                    self._llm = get_provider(provider_type)
+                    self._provider_type = provider_type
+                    self.console.print(f"[{Colors.INFO}]{Icons.INFO} Auto-escalated to {self._llm.model_name}[/{Colors.INFO}]")
+                    return True
+                except Exception:
+                    continue
+
+        return False
+
+    def _check_for_updates_notification(self) -> None:
+        """Check for updates and show notification if available."""
+        try:
+            from ..update import check_for_updates
+            update_info = check_for_updates()
+
+            if update_info and update_info.has_update:
+                self.console.print(
+                    f"[{Colors.INFO}]{Icons.INFO} Update available: "
+                    f"v{update_info.current_version} → v{update_info.latest_version}[/{Colors.INFO}]"
+                )
+                self.console.print(f"[{Colors.DIM}]Run /update to upgrade[/{Colors.DIM}]")
+        except Exception:
+            pass  # Silently fail - don't block startup
+
+    def _do_update(self) -> None:
+        """Perform update and check for new features requiring setup."""
+        from ..update import perform_update, check_for_updates, check_new_features_setup
+
+        # Show current version
+        update_info = check_for_updates(force=True)
+        if update_info:
+            if update_info.has_update:
+                self.console.print(
+                    f"\n[{Colors.INFO}]Current: v{update_info.current_version} → "
+                    f"Latest: v{update_info.latest_version}[/{Colors.INFO}]"
+                )
+                if update_info.release_notes:
+                    # Show brief release notes
+                    notes_preview = update_info.release_notes.split("\n")[:5]
+                    self.console.print(f"\n[{Colors.DIM}]What's new:[/{Colors.DIM}]")
+                    for line in notes_preview:
+                        if line.strip():
+                            self.console.print(f"[{Colors.DIM}]  {line.strip()}[/{Colors.DIM}]")
+            else:
+                self.console.print(f"\n[{Colors.SUCCESS}]{Icons.SUCCESS} You're on the latest version (v{update_info.current_version})[/{Colors.SUCCESS}]")
+                return
+
+        # Perform update
+        if perform_update(self.console):
+            # Check if new features need setup
+            check_new_features_setup(self.console)
 
     def _do_undo(self) -> None:
         """Undo the last file change."""

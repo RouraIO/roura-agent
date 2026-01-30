@@ -81,6 +81,11 @@ class AnthropicProvider(LLMProvider):
         # All Claude 3+ models support tool use
         return "claude-3" in self._model.lower() or "claude-sonnet-4" in self._model.lower()
 
+    def supports_vision(self) -> bool:
+        """Check if current model supports vision/image input."""
+        # All Claude 3+ models support vision
+        return "claude-3" in self._model.lower() or "claude-sonnet-4" in self._model.lower()
+
     def _get_headers(self) -> dict[str, str]:
         """Get HTTP headers for API requests."""
         return {
@@ -104,7 +109,7 @@ class AnthropicProvider(LLMProvider):
 
         for msg in messages:
             role = msg.get("role", "")
-            content = msg.get("content", "")
+            content = msg.get("content", "") or ""  # Ensure not None
 
             if role == "system":
                 system_prompt = content
@@ -112,12 +117,14 @@ class AnthropicProvider(LLMProvider):
 
             if role == "tool":
                 # Convert tool result to Anthropic format
+                # Ensure content is a string
+                tool_content = content if content else "OK"
                 converted.append({
                     "role": "user",
                     "content": [{
                         "type": "tool_result",
                         "tool_use_id": msg.get("tool_call_id", ""),
-                        "content": content,
+                        "content": tool_content,
                     }]
                 })
                 continue
@@ -149,13 +156,63 @@ class AnthropicProvider(LLMProvider):
                 })
                 continue
 
-            # Regular message
+            # Regular message - skip empty content for non-user roles
+            if not content and role != "user":
+                continue
+
+            # Ensure user messages have content
+            if role == "user" and not content:
+                content = "."  # Anthropic requires non-empty content
+
             converted.append({
                 "role": role,
                 "content": content,
             })
 
-        return system_prompt, converted
+        # Anthropic requires messages to start with user role
+        # and alternate between user and assistant
+        return system_prompt, self._ensure_valid_message_order(converted)
+
+    def _ensure_valid_message_order(self, messages: list[dict]) -> list[dict]:
+        """
+        Ensure messages follow Anthropic's requirements:
+        - Must start with 'user' role
+        - Must alternate between 'user' and 'assistant'
+        - Consecutive same-role messages should be merged
+        """
+        if not messages:
+            return messages
+
+        result = []
+
+        for msg in messages:
+            if not result:
+                # First message must be user
+                if msg["role"] != "user":
+                    # Prepend a user message
+                    result.append({"role": "user", "content": "Continue."})
+                result.append(msg)
+            else:
+                last_role = result[-1]["role"]
+                current_role = msg["role"]
+
+                if current_role == last_role:
+                    # Merge consecutive same-role messages
+                    last_content = result[-1]["content"]
+                    new_content = msg["content"]
+
+                    if isinstance(last_content, str) and isinstance(new_content, str):
+                        result[-1]["content"] = last_content + "\n" + new_content
+                    elif isinstance(last_content, list) and isinstance(new_content, list):
+                        result[-1]["content"] = last_content + new_content
+                    elif isinstance(last_content, str) and isinstance(new_content, list):
+                        result[-1]["content"] = [{"type": "text", "text": last_content}] + new_content
+                    elif isinstance(last_content, list) and isinstance(new_content, str):
+                        result[-1]["content"] = last_content + [{"type": "text", "text": new_content}]
+                else:
+                    result.append(msg)
+
+        return result
 
     def _convert_tools(self, tools: list[dict]) -> list[dict]:
         """Convert tool definitions to Anthropic format."""
@@ -272,6 +329,15 @@ class AnthropicProvider(LLMProvider):
                 if response.status_code == 429:
                     yield LLMResponse(error="Anthropic rate limit exceeded", done=True)
                     return
+                if response.status_code == 400:
+                    # Try to get error details from response
+                    try:
+                        error_data = response.json()
+                        error_msg = error_data.get("error", {}).get("message", "Bad request")
+                        yield LLMResponse(error=f"Anthropic API error: {error_msg}", done=True)
+                    except Exception:
+                        yield LLMResponse(error="Anthropic API error: Bad request", done=True)
+                    return
 
                 response.raise_for_status()
 
@@ -387,3 +453,75 @@ class AnthropicProvider(LLMProvider):
             tool_calls=tool_calls,
             done=True,
         )
+
+    def chat_with_images(
+        self,
+        prompt: str,
+        images: list[dict],
+        system_prompt: Optional[str] = None,
+    ) -> LLMResponse:
+        """
+        Chat with image content using Claude's vision capabilities.
+
+        Args:
+            prompt: Text prompt to accompany images
+            images: List of image dicts in Anthropic format:
+                    {"type": "image", "source": {"type": "base64", "media_type": "...", "data": "..."}}
+                    or {"type": "image", "source": {"type": "url", "url": "..."}}
+            system_prompt: Optional system prompt
+
+        Returns:
+            LLMResponse with the model's response
+        """
+        import httpx
+        from ..errors import RouraError, ErrorCode
+
+        if not self.supports_vision():
+            return LLMResponse(error=f"Model {self._model} does not support vision")
+
+        # Build message content with images and text
+        content = []
+        for img in images:
+            if img.get("type") == "image":
+                content.append(img)
+
+        # Add text prompt
+        content.append({"type": "text", "text": prompt})
+
+        messages = [{"role": "user", "content": content}]
+
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "max_tokens": self._max_tokens,
+        }
+
+        if system_prompt:
+            payload["system"] = system_prompt
+
+        try:
+            with httpx.Client(timeout=self._timeout) as client:
+                response = client.post(
+                    f"{self._base_url}/v1/messages",
+                    headers=self._get_headers(),
+                    json=payload,
+                )
+
+                if response.status_code == 401:
+                    raise RouraError(ErrorCode.API_KEY_INVALID, message="Invalid Anthropic API key")
+                if response.status_code == 429:
+                    raise RouraError(ErrorCode.RATE_LIMIT_EXCEEDED, message="Anthropic rate limit exceeded")
+
+                response.raise_for_status()
+                data = response.json()
+
+            return self._parse_response(data)
+
+        except RouraError:
+            raise
+        except httpx.TimeoutException as e:
+            return LLMResponse(error="Vision request timed out")
+        except httpx.HTTPError as e:
+            return LLMResponse(error=f"Anthropic API error: {str(e)}")
+        except Exception as e:
+            return LLMResponse(error=f"Unexpected error: {str(e)}")

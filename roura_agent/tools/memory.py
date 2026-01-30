@@ -1,5 +1,11 @@
 """
-Roura Agent Memory Tool - Store and retrieve project notes.
+Roura Agent Memory Tool - Store, retrieve, and search project notes.
+
+Provides:
+- Note storage with tags
+- Note retrieval
+- Semantic search (RAG-ready)
+- Memory management
 
 © Roura.io
 """
@@ -10,7 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
-from ..memory import ProjectMemory
+from ..memory import ProjectMemory, RAGMemory
 
 
 # Cache for project memory instances
@@ -175,14 +181,115 @@ class MemoryClearTool(Tool):
         return "Would clear all project memory"
 
 
+@dataclass
+class MemorySearchTool(Tool):
+    """Search project memory using semantic matching."""
+
+    name: str = "memory.search"
+    description: str = "Search project memory for notes matching a query"
+    risk_level: RiskLevel = RiskLevel.SAFE
+    parameters: list[ToolParam] = field(default_factory=lambda: [
+        ToolParam("query", str, "Search query to find relevant notes", required=True),
+        ToolParam("count", int, "Maximum number of results (default: 5)", required=False, default=5),
+    ])
+
+    def execute(
+        self,
+        query: str,
+        count: int = 5,
+    ) -> ToolResult:
+        """Search memory for relevant notes."""
+        try:
+            memory = get_memory()
+            rag = RAGMemory(memory)
+
+            results = rag.retrieve(query, top_k=count)
+
+            return ToolResult(
+                success=True,
+                output={
+                    "query": query,
+                    "count": len(results),
+                    "results": [
+                        {
+                            "content": r.note.content,
+                            "tags": r.note.tags,
+                            "score": round(r.score, 3),
+                            "matched_terms": r.matched_terms,
+                            "created_at": r.note.created_at,
+                        }
+                        for r in results
+                    ],
+                },
+            )
+
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=str(e),
+            )
+
+    def dry_run(self, query: str, count: int = 5) -> str:
+        return f"Would search memory for: {query}"
+
+
+@dataclass
+class MemoryContextTool(Tool):
+    """Get relevant memory context for a task."""
+
+    name: str = "memory.context"
+    description: str = "Get memory context relevant to a task for RAG injection"
+    risk_level: RiskLevel = RiskLevel.SAFE
+    parameters: list[ToolParam] = field(default_factory=lambda: [
+        ToolParam("task", str, "Task description to find context for", required=True),
+        ToolParam("max_chars", int, "Maximum characters for context (default: 2000)", required=False, default=2000),
+    ])
+
+    def execute(
+        self,
+        task: str,
+        max_chars: int = 2000,
+    ) -> ToolResult:
+        """Get relevant context for a task."""
+        try:
+            memory = get_memory()
+            rag = RAGMemory(memory)
+
+            context = rag.get_context_for_task(task)
+
+            return ToolResult(
+                success=True,
+                output={
+                    "task": task,
+                    "context": context,
+                    "context_length": len(context),
+                },
+            )
+
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=str(e),
+            )
+
+    def dry_run(self, task: str, max_chars: int = 2000) -> str:
+        return f"Would get context for task: {task}"
+
+
 # Create and register tool instances
 memory_store = MemoryStoreTool()
 memory_recall = MemoryRecallTool()
 memory_clear = MemoryClearTool()
+memory_search = MemorySearchTool()
+memory_context = MemoryContextTool()
 
 registry.register(memory_store)
 registry.register(memory_recall)
 registry.register(memory_clear)
+registry.register(memory_search)
+registry.register(memory_context)
 
 
 # Convenience functions
@@ -199,3 +306,13 @@ def recall_notes(tag: Optional[str] = None, count: int = 10) -> ToolResult:
 def clear_memory() -> ToolResult:
     """Clear project memory."""
     return memory_clear.execute()
+
+
+def search_memory(query: str, count: int = 5) -> ToolResult:
+    """Search memory for notes matching query."""
+    return memory_search.execute(query=query, count=count)
+
+
+def get_memory_context(task: str, max_chars: int = 2000) -> ToolResult:
+    """Get memory context relevant to a task."""
+    return memory_context.execute(task=task, max_chars=max_chars)
