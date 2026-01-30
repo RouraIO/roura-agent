@@ -129,6 +129,16 @@ from .project import (
     project_related,
     project_summary,
 )
+from .review import (
+    review_file,
+    review_diff,
+    review_project,
+    suggest_fixes,
+    code_review_file,
+    code_review_diff,
+    code_review_project,
+    code_suggest_fixes,
+)
 
 __all__ = [
     # Base
@@ -277,4 +287,13 @@ __all__ = [
     "project_analyze",
     "project_related",
     "project_summary",
+    # Code Review (Phase 7)
+    "review_file",
+    "review_diff",
+    "review_project",
+    "suggest_fixes",
+    "code_review_file",
+    "code_review_diff",
+    "code_review_project",
+    "code_suggest_fixes",
 ]
