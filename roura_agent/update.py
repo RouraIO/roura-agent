@@ -241,6 +241,8 @@ def perform_update(console) -> bool:
                 timeout=120,
             )
 
+            if result.returncode == 0:
+                console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS} Update complete![/{Colors.SUCCESS}]")
                 return True
             else:
                 console.print(f"[{Colors.ERROR}]Update failed: {result.stderr}[/{Colors.ERROR}]")
