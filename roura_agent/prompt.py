@@ -16,20 +16,21 @@ from pathlib import Path
 
 # Slash commands with descriptions
 COMMANDS = {
-    "/walkthrough": "Interactive tutorial - learn how to use Roura Agent",
     "/help": "Show help and available commands",
     "/status": "Show session info (version, model, project)",
+    "/version": "Show version number",
     "/model": "Switch LLM provider (ollama, openai, anthropic)",
     "/upgrade": "Check for and install updates",
     "/restart": "Restart CLI (preserves session)",
     "/context": "Show loaded file context",
     "/undo": "Undo last file change",
-    "/clear": "Clear conversation and context",
+    "/clear": "Clear conversation and start fresh",
     "/tools": "List available tools",
     "/agents": "List specialized agents",
     "/history": "Show session history",
     "/resume": "Resume a previous session",
     "/export": "Export current session",
+    "/walkthrough": "Interactive tutorial",
     "/license": "View or enter license key",
     "/pricing": "View pricing and upgrade to PRO",
     "exit": "Quit roura-agent",

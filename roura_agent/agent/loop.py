@@ -906,6 +906,7 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
                         continue
 
                     if user_input.lower() in ("/clear", "/reset"):
+                        old_count = len(self.context.messages)
                         self.context.clear()
                         # Re-add system message
                         system_prompt = self.BASE_SYSTEM_PROMPT
@@ -914,7 +915,8 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
                             project_context = get_project_context_prompt(self.project)
                             system_prompt += f"\n\n{project_context}"
                         self.context.add_message("system", system_prompt)
-                        self.console.print("[dim]Context cleared[/dim]")
+                        self.console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS}[/{Colors.SUCCESS}] Conversation cleared")
+                        self.console.print(f"[{Colors.DIM}]Ready for a fresh start[/{Colors.DIM}]")
                         continue
 
                     if user_input.lower() in ("/tools",):
@@ -976,8 +978,13 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
                         # If we get here, restart failed
                         continue
 
-                    if user_input.lower() == "/status":
+                    if user_input.lower() in ("/status", "/info"):
                         self._show_status()
+                        continue
+
+                    if user_input.lower() in ("/version", "/v"):
+                        from ..constants import VERSION
+                        self.console.print(f"[{Colors.PRIMARY}]Roura Agent[/{Colors.PRIMARY}] v{VERSION}")
                         continue
 
                     if user_input.lower() in ("/walkthrough", "/tutorial", "/tour"):
@@ -1706,8 +1713,12 @@ roura-agent setup    # Reconfigure settings
                 )
 
         self._current_session = session
+        msg_count = len(session.messages)
         self.console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS}[/{Colors.SUCCESS}] Resumed session: {session.get_summary()}")
-        self.console.print(f"[{Colors.DIM}]Loaded {len(session.messages)} messages[/{Colors.DIM}]")
+        if msg_count > 0:
+            self.console.print(f"[{Colors.DIM}]Restored {msg_count} messages from previous conversation[/{Colors.DIM}]")
+        else:
+            self.console.print(f"[{Colors.DIM}]Session restored (no previous messages)[/{Colors.DIM}]")
 
     def _export_session(self, format_type: str = "markdown") -> None:
         """Export current session to file."""
