@@ -222,29 +222,25 @@ def perform_update(console) -> bool:
             return False
 
     elif is_pipx:
-        # Standard pipx install - use pipx upgrade
-        console.print(f"[{Colors.DIM}]Upgrading via pipx...[/{Colors.DIM}]")
+        # Get latest version from GitHub
+        update_info = check_for_updates(force=True)
+        if not update_info or not update_info.has_update:
+            console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS} Already on latest version![/{Colors.SUCCESS}]")
+            return False
+
+        latest_version = update_info.latest_version
+        github_url = f"git+https://github.com/{GITHUB_REPO}.git@v{latest_version}"
+
+        console.print(f"[{Colors.DIM}]Installing v{latest_version} from GitHub...[/{Colors.DIM}]")
 
         try:
             result = subprocess.run(
-                ["pipx", "upgrade", "roura-agent"],
+                ["pipx", "install", github_url, "--force"],
                 capture_output=True,
                 text=True,
                 timeout=120,
             )
 
-            if result.returncode != 0:
-                # Try reinstall if upgrade fails
-                result = subprocess.run(
-                    ["pipx", "install", "roura-agent", "--force"],
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                )
-
-            if result.returncode == 0:
-                console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS} Update complete![/{Colors.SUCCESS}]")
-                console.print(f"\n[{Colors.WARNING}]Restart roura-agent to use the new version.[/{Colors.WARNING}]")
                 return True
             else:
                 console.print(f"[{Colors.ERROR}]Update failed: {result.stderr}[/{Colors.ERROR}]")
