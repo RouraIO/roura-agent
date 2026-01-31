@@ -1716,6 +1716,243 @@ def _enable_safe_mode() -> None:
         del registry._tools[name]
 
 
+# --- Review Command ---
+
+
+@app.command("review")
+def review_cmd(
+    path: str = typer.Argument(".", help="Project path to review"),
+    files: str = typer.Option(None, "--files", "-f", help="Comma-separated list of files to review"),
+    max_files: int = typer.Option(50, "--max-files", "-m", help="Maximum number of files to review"),
+    output_format: str = typer.Option("text", "--output", "-o", help="Output format: text, json, github, gitlab"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (shortcut for --output json)"),
+    interactive: bool = typer.Option(False, "--interactive", "-i", help="Interactively select files to review"),
+):
+    """
+    [bold cyan]Code Review[/bold cyan] - AI-powered code review for your project.
+
+    Reviews code for bugs, security issues, performance problems, and best practices.
+
+    [dim]Examples:[/dim]
+      roura-agent review                     Review current directory
+      roura-agent review ./src               Review specific directory
+      roura-agent review -f "file1.swift,file2.swift"  Review specific files
+      roura-agent review -i                  Interactive file selection
+    """
+    from pathlib import Path as P
+    import tempfile
+
+    from rich.progress import Progress, SpinnerColumn, TextColumn
+    from .pro.ci import CIConfig, CIMode, CIRunner, CIExitCode
+    from .pro.billing import BillingManager, BillingPlan
+
+    target_path = P(path).resolve()
+
+    if not target_path.exists():
+        console.print(f"[red]Error:[/red] Path does not exist: {target_path}")
+        raise typer.Exit(code=1)
+
+    # Handle file selection
+    selected_files = None
+
+    if files:
+        # Explicit file list provided
+        selected_files = [f.strip() for f in files.split(",") if f.strip()]
+    elif interactive:
+        # Interactive mode
+        selected_files = _interactive_file_selection(target_path, files)
+        if selected_files is None:
+            console.print("[dim]Review cancelled[/dim]")
+            raise typer.Exit(code=0)
+
+    # Output format
+    fmt = "json" if json_output else output_format
+
+    # Create temp billing manager to bypass limits for CLI review
+    with tempfile.TemporaryDirectory() as tmp:
+        billing = BillingManager(storage_path=P(tmp) / "billing.json")
+        billing.set_plan(BillingPlan.PRO)
+
+        config = CIConfig(
+            mode=CIMode.REVIEW,
+            target_path=str(target_path),
+            max_files=max_files,
+            output_format=fmt,
+        )
+
+        runner = CIRunner(config, billing_manager=billing)
+
+        # If specific files were selected, filter to only those
+        if selected_files:
+            runner._selected_files = [target_path / f for f in selected_files]
+
+        console.print(f"\n[bold cyan]Reviewing project:[/bold cyan] {target_path}")
+        console.print()
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Analyzing code...", total=None)
+            result = runner.run()
+            progress.update(task, description="Review complete!")
+
+        # Display results
+        console.print()
+        if fmt == "json":
+            print(result.to_json())
+        elif fmt == "github":
+            print(result.to_github_output())
+        elif fmt == "gitlab":
+            print(result.to_gitlab_codequality())
+        else:
+            _display_review_results(result, target_path)
+
+        # Exit with appropriate code
+        if result.exit_code == CIExitCode.SUCCESS:
+            raise typer.Exit(code=0)
+        else:
+            raise typer.Exit(code=result.exit_code.value)
+
+
+def _interactive_file_selection(target_path: Path, preset_files: str = None) -> list[str] | None:
+    """Interactive file selection for review."""
+    from .pro.ci import CIRunner, CIConfig, CIMode
+
+    # First detect project and list available files
+    config = CIConfig(mode=CIMode.REVIEW, target_path=str(target_path), max_files=500)
+    runner = CIRunner.__new__(CIRunner)
+    runner.config = config
+
+    project_type = runner._detect_project_type(target_path)
+    all_files = runner._find_files(target_path, project_type=project_type)
+
+    if not all_files:
+        console.print("[yellow]No reviewable files found in this project[/yellow]")
+        return None
+
+    console.print(f"[bold]Project type:[/bold] {project_type or 'Unknown'}")
+    console.print(f"[bold]Found {len(all_files)} reviewable files[/bold]\n")
+
+    # Show options
+    console.print("[bold cyan]Review options:[/bold cyan]")
+    console.print("  [dim]1.[/dim] Review entire project")
+    console.print("  [dim]2.[/dim] Review specific files (comma-separated)")
+    console.print("  [dim]3.[/dim] Review files by pattern (e.g., *.swift)")
+    console.print("  [dim]4.[/dim] List all files")
+    console.print("  [dim]q.[/dim] Cancel")
+    console.print()
+
+    choice = Prompt.ask("Choose option", choices=["1", "2", "3", "4", "q"], default="1")
+
+    if choice == "q":
+        return None
+
+    if choice == "1":
+        # Review all files
+        console.print(f"\n[dim]Will review up to {len(all_files)} files[/dim]")
+        return []  # Empty list means all files
+
+    if choice == "4":
+        # List all files
+        console.print("\n[bold]Available files:[/bold]")
+        for i, f in enumerate(all_files, 1):
+            try:
+                rel = f.relative_to(target_path)
+            except ValueError:
+                rel = f
+            console.print(f"  [dim]{i:3d}.[/dim] {rel}")
+        console.print()
+        return _interactive_file_selection(target_path, preset_files)
+
+    if choice == "2":
+        # Specific files
+        console.print("\n[dim]Enter file paths relative to project root, comma-separated[/dim]")
+        console.print("[dim]Example: App/Main.swift, Core/Utils.swift[/dim]")
+        files_input = Prompt.ask("Files")
+        if not files_input.strip():
+            return []
+        return [f.strip() for f in files_input.split(",") if f.strip()]
+
+    if choice == "3":
+        # Pattern matching
+        console.print("\n[dim]Enter a glob pattern[/dim]")
+        console.print("[dim]Example: **/*.swift, Core/**/*.py[/dim]")
+        pattern = Prompt.ask("Pattern")
+        if not pattern.strip():
+            return []
+
+        matched = []
+        for f in all_files:
+            try:
+                rel = str(f.relative_to(target_path))
+            except ValueError:
+                rel = str(f)
+            import fnmatch
+            if fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(f.name, pattern):
+                matched.append(rel)
+
+        if matched:
+            console.print(f"\n[green]Matched {len(matched)} files[/green]")
+            for m in matched[:10]:
+                console.print(f"  - {m}")
+            if len(matched) > 10:
+                console.print(f"  [dim]... and {len(matched) - 10} more[/dim]")
+            return matched
+        else:
+            console.print("[yellow]No files matched the pattern[/yellow]")
+            return _interactive_file_selection(target_path, preset_files)
+
+    return []
+
+
+def _display_review_results(result, target_path: Path):
+    """Display review results in a rich format."""
+    from .pro.ci import CIExitCode
+
+    # Header
+    status_color = "green" if result.exit_code == CIExitCode.SUCCESS else "red"
+    status_text = "PASSED" if result.exit_code == CIExitCode.SUCCESS else "FAILED"
+
+    console.print(Panel(
+        f"[bold {status_color}]{status_text}[/bold {status_color}]",
+        title="[bold cyan]Code Review[/bold cyan]",
+        subtitle=f"[dim]{result.duration_seconds:.1f}s[/dim]",
+    ))
+
+    # Summary
+    console.print(f"\n{result.summary}")
+
+    # Issues
+    if result.issues:
+        console.print(f"\n[bold]Issues Found: {len(result.issues)}[/bold]\n")
+
+        # Group by file
+        by_file: dict[str, list] = {}
+        for issue in result.issues:
+            if issue.file not in by_file:
+                by_file[issue.file] = []
+            by_file[issue.file].append(issue)
+
+        for file_path, issues in sorted(by_file.items()):
+            console.print(f"[bold]{file_path}[/bold]")
+            for issue in issues:
+                severity_icon = {
+                    "error": "[red]●[/red]",
+                    "warning": "[yellow]●[/yellow]",
+                    "info": "[blue]●[/blue]",
+                }.get(issue.severity, "○")
+
+                line_str = f":{issue.line}" if issue.line else ""
+                console.print(f"  {severity_icon} {issue.severity.upper()}{line_str}: {issue.message}")
+                if issue.suggestion:
+                    console.print(f"      [dim]→ {issue.suggestion}[/dim]")
+            console.print()
+    else:
+        console.print("\n[green]✓ No issues found![/green]")
+
+
 # Legacy commands for backward compatibility
 
 

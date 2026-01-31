@@ -6,6 +6,7 @@ Provides:
 - Structured output for CI systems
 - Exit codes and status reporting
 - Environment variable configuration
+- Real code review with LLM integration
 
 © Roura.io
 """
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -24,6 +26,124 @@ from ..logging import get_logger
 from .billing import BillingManager, UsageType, get_billing_manager
 
 logger = get_logger(__name__)
+
+
+# =============================================================================
+# File Pattern Definitions
+# =============================================================================
+
+# Comprehensive file patterns by language/framework
+FILE_PATTERNS: dict[str, list[str]] = {
+    # Mobile
+    "swift": ["**/*.swift"],
+    "kotlin": ["**/*.kt", "**/*.kts"],
+    "objc": ["**/*.m", "**/*.mm", "**/*.h"],
+
+    # Web Frontend
+    "javascript": ["**/*.js", "**/*.mjs", "**/*.cjs"],
+    "typescript": ["**/*.ts", "**/*.tsx", "**/*.mts"],
+    "jsx": ["**/*.jsx"],
+    "vue": ["**/*.vue"],
+    "svelte": ["**/*.svelte"],
+    "css": ["**/*.css", "**/*.scss", "**/*.sass", "**/*.less"],
+    "html": ["**/*.html", "**/*.htm"],
+
+    # Backend
+    "python": ["**/*.py"],
+    "go": ["**/*.go"],
+    "rust": ["**/*.rs"],
+    "java": ["**/*.java"],
+    "csharp": ["**/*.cs"],
+    "ruby": ["**/*.rb"],
+    "php": ["**/*.php"],
+    "elixir": ["**/*.ex", "**/*.exs"],
+    "scala": ["**/*.scala"],
+
+    # Config & Data
+    "json": ["**/*.json"],
+    "yaml": ["**/*.yaml", "**/*.yml"],
+    "toml": ["**/*.toml"],
+    "xml": ["**/*.xml"],
+    "sql": ["**/*.sql"],
+
+    # Shell & Scripts
+    "shell": ["**/*.sh", "**/*.bash", "**/*.zsh"],
+    "powershell": ["**/*.ps1", "**/*.psm1"],
+
+    # Documentation
+    "markdown": ["**/*.md", "**/*.mdx"],
+
+    # Other
+    "graphql": ["**/*.graphql", "**/*.gql"],
+    "proto": ["**/*.proto"],
+    "terraform": ["**/*.tf", "**/*.tfvars"],
+    "dockerfile": ["**/Dockerfile", "**/*.dockerfile"],
+}
+
+# Project type detection patterns
+PROJECT_MARKERS: dict[str, list[str]] = {
+    "ios": ["*.xcodeproj", "*.xcworkspace", "Package.swift", "Podfile"],
+    "android": ["build.gradle", "build.gradle.kts", "AndroidManifest.xml"],
+    "python": ["pyproject.toml", "setup.py", "requirements.txt", "Pipfile"],
+    "node": ["package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"],
+    "rust": ["Cargo.toml"],
+    "go": ["go.mod", "go.sum"],
+    "ruby": ["Gemfile", "*.gemspec"],
+    "dotnet": ["*.csproj", "*.sln", "*.fsproj"],
+    "java": ["pom.xml", "build.gradle"],
+    "php": ["composer.json"],
+    "terraform": ["*.tf", "terraform.tfstate"],
+}
+
+# Default patterns for each project type
+PROJECT_DEFAULT_PATTERNS: dict[str, list[str]] = {
+    "ios": ["swift", "objc", "json", "yaml", "markdown"],
+    "android": ["kotlin", "java", "xml", "json", "yaml"],
+    "python": ["python", "json", "yaml", "toml", "markdown"],
+    "node": ["javascript", "typescript", "jsx", "json", "yaml", "css", "html"],
+    "rust": ["rust", "toml", "markdown"],
+    "go": ["go", "json", "yaml", "markdown"],
+    "ruby": ["ruby", "yaml", "json"],
+    "dotnet": ["csharp", "json", "xml"],
+    "java": ["java", "xml", "json", "yaml"],
+    "php": ["php", "json", "yaml"],
+    "terraform": ["terraform", "json", "yaml"],
+}
+
+# Files/directories to always ignore
+IGNORE_PATTERNS: list[str] = [
+    "**/.git/**",
+    "**/.svn/**",
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/.pytest_cache/**",
+    "**/venv/**",
+    "**/.venv/**",
+    "**/env/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/.build/**",
+    "**/DerivedData/**",
+    "**/Pods/**",
+    "**/*.xcodeproj/**",
+    "**/*.xcworkspace/**",
+    "**/target/**",
+    "**/vendor/**",
+    "**/.idea/**",
+    "**/.vscode/**",
+    "**/coverage/**",
+    "**/.coverage/**",
+    "**/htmlcov/**",
+    "**/*.min.js",
+    "**/*.min.css",
+    "**/*.map",
+    "**/package-lock.json",
+    "**/yarn.lock",
+    "**/pnpm-lock.yaml",
+    "**/Cargo.lock",
+    "**/poetry.lock",
+    "**/Gemfile.lock",
+]
 
 
 class CIMode(str, Enum):
@@ -236,6 +356,7 @@ class CIRunner:
         self.config = config
         self._billing = billing_manager or get_billing_manager()
         self._result: Optional[CIResult] = None
+        self._selected_files: Optional[list[Path]] = None  # Override file list
 
     def run(self) -> CIResult:
         """Execute CI task."""
@@ -297,21 +418,163 @@ class CIRunner:
         return self._result
 
     def _run_review(self) -> None:
-        """Run code review."""
+        """Run code review with LLM."""
         target = Path(self.config.target_path)
 
-        # Find files to review
-        files = self._find_files(target)
+        # Detect project type and find files
+        project_type = self._detect_project_type(target)
+
+        # Use selected files if provided, otherwise find all
+        if self._selected_files:
+            files = [f for f in self._selected_files if f.exists()]
+        else:
+            files = self._find_files(target, project_type=project_type)
+
         self._result.files_analyzed = len(files)
 
-        # This would integrate with the agent core for actual review
-        # For now, provide a placeholder implementation
-        self._result.summary = f"Reviewed {len(files)} files"
+        if not files:
+            self._result.summary = "No files found to review"
+            return
+
+        # Collect file stats for report
+        file_stats = self._collect_file_stats(files, target)
+
+        # Perform actual review
+        issues = self._review_files(files, target)
+        self._result.issues = issues
+
+        # Generate detailed summary with report
+        self._result.summary = self._generate_review_report(
+            files, issues, project_type, file_stats
+        )
+
+    def _collect_file_stats(
+        self,
+        files: list[Path],
+        base_path: Path,
+    ) -> dict[str, Any]:
+        """Collect statistics about files for reporting."""
+        stats = {
+            "total_lines": 0,
+            "total_chars": 0,
+            "by_extension": {},
+            "largest_files": [],
+        }
+
+        file_sizes = []
+        for file_path in files:
+            try:
+                content = file_path.read_text(errors="ignore")
+                lines = len(content.split("\n"))
+                chars = len(content)
+
+                stats["total_lines"] += lines
+                stats["total_chars"] += chars
+
+                ext = file_path.suffix or "no_ext"
+                if ext not in stats["by_extension"]:
+                    stats["by_extension"][ext] = {"count": 0, "lines": 0}
+                stats["by_extension"][ext]["count"] += 1
+                stats["by_extension"][ext]["lines"] += lines
+
+                try:
+                    rel_path = str(file_path.relative_to(base_path))
+                except ValueError:
+                    rel_path = str(file_path)
+
+                file_sizes.append((rel_path, lines, chars))
+
+            except Exception:
+                pass
+
+        # Get top 5 largest files by lines
+        file_sizes.sort(key=lambda x: x[1], reverse=True)
+        stats["largest_files"] = file_sizes[:5]
+
+        return stats
+
+    def _generate_review_report(
+        self,
+        files: list[Path],
+        issues: list[CIIssue],
+        project_type: Optional[str],
+        stats: dict[str, Any],
+    ) -> str:
+        """Generate a detailed review report."""
+        lines = []
+
+        # Header
+        lines.append(f"Project Type: {project_type or 'Unknown'}")
+        lines.append(f"Files Reviewed: {len(files)}")
+        lines.append(f"Total Lines: {stats['total_lines']:,}")
+        lines.append("")
+
+        # Issue summary
+        error_count = sum(1 for i in issues if i.severity == "error")
+        warning_count = sum(1 for i in issues if i.severity == "warning")
+        info_count = sum(1 for i in issues if i.severity == "info")
+
+        lines.append("─" * 40)
+        lines.append("ISSUE SUMMARY")
+        lines.append("─" * 40)
+        lines.append(f"  🔴 Errors:   {error_count}")
+        lines.append(f"  🟡 Warnings: {warning_count}")
+        lines.append(f"  🔵 Info:     {info_count}")
+        lines.append("")
+
+        # Files by extension
+        if stats["by_extension"]:
+            lines.append("─" * 40)
+            lines.append("FILES BY TYPE")
+            lines.append("─" * 40)
+            for ext, data in sorted(stats["by_extension"].items(), key=lambda x: x[1]["lines"], reverse=True):
+                lines.append(f"  {ext}: {data['count']} files, {data['lines']:,} lines")
+            lines.append("")
+
+        # Largest files
+        if stats["largest_files"]:
+            lines.append("─" * 40)
+            lines.append("LARGEST FILES")
+            lines.append("─" * 40)
+            for path, line_count, _ in stats["largest_files"]:
+                lines.append(f"  {line_count:>5} lines  {path}")
+            lines.append("")
+
+        # Files with most issues
+        if issues:
+            lines.append("─" * 40)
+            lines.append("HOTSPOTS (files with most issues)")
+            lines.append("─" * 40)
+            issue_counts: dict[str, dict[str, int]] = {}
+            for issue in issues:
+                if issue.file not in issue_counts:
+                    issue_counts[issue.file] = {"error": 0, "warning": 0, "info": 0}
+                issue_counts[issue.file][issue.severity] += 1
+
+            sorted_files = sorted(
+                issue_counts.items(),
+                key=lambda x: (x[1]["error"] * 10 + x[1]["warning"] * 3 + x[1]["info"]),
+                reverse=True,
+            )[:5]
+
+            for file_path, counts in sorted_files:
+                parts = []
+                if counts["error"]:
+                    parts.append(f"{counts['error']}E")
+                if counts["warning"]:
+                    parts.append(f"{counts['warning']}W")
+                if counts["info"]:
+                    parts.append(f"{counts['info']}I")
+                lines.append(f"  {' '.join(parts):>10}  {file_path}")
+            lines.append("")
+
+        return "\n".join(lines)
 
     def _run_fix(self) -> None:
         """Run automatic fixes."""
         target = Path(self.config.target_path)
-        files = self._find_files(target)
+        project_type = self._detect_project_type(target)
+        files = self._find_files(target, project_type=project_type)
         self._result.files_analyzed = len(files)
         self._result.summary = f"Analyzed {len(files)} files for fixes"
 
@@ -322,42 +585,348 @@ class CIRunner:
     def _run_test(self) -> None:
         """Run test analysis."""
         target = Path(self.config.target_path)
-        files = self._find_files(target, patterns=["**/test_*.py", "**/*_test.py"])
+        project_type = self._detect_project_type(target)
+
+        # Find test files based on project type
+        test_patterns = self._get_test_patterns(project_type)
+        files = self._find_files(target, patterns=test_patterns)
         self._result.files_analyzed = len(files)
         self._result.summary = f"Analyzed {len(files)} test files"
 
     def _run_document(self) -> None:
         """Run documentation generation."""
         target = Path(self.config.target_path)
-        files = self._find_files(target)
+        project_type = self._detect_project_type(target)
+        files = self._find_files(target, project_type=project_type)
         self._result.files_analyzed = len(files)
         self._result.summary = f"Documented {len(files)} files"
 
     def _run_analyze(self) -> None:
         """Run static analysis."""
         target = Path(self.config.target_path)
-        files = self._find_files(target)
+        project_type = self._detect_project_type(target)
+        files = self._find_files(target, project_type=project_type)
         self._result.files_analyzed = len(files)
         self._result.summary = f"Analyzed {len(files)} files"
+
+    def _detect_project_type(self, path: Path) -> Optional[str]:
+        """Detect project type based on marker files."""
+        for project_type, markers in PROJECT_MARKERS.items():
+            for marker in markers:
+                if list(path.glob(marker)):
+                    logger.debug(f"Detected project type: {project_type}")
+                    return project_type
+        return None
+
+    def _get_file_patterns(self, project_type: Optional[str]) -> list[str]:
+        """Get file patterns for a project type."""
+        if project_type and project_type in PROJECT_DEFAULT_PATTERNS:
+            categories = PROJECT_DEFAULT_PATTERNS[project_type]
+            patterns = []
+            for cat in categories:
+                if cat in FILE_PATTERNS:
+                    patterns.extend(FILE_PATTERNS[cat])
+            return patterns
+
+        # Default: include common code files
+        default_categories = ["python", "javascript", "typescript", "swift", "kotlin", "go", "rust", "json", "yaml"]
+        patterns = []
+        for cat in default_categories:
+            if cat in FILE_PATTERNS:
+                patterns.extend(FILE_PATTERNS[cat])
+        return patterns
+
+    def _get_test_patterns(self, project_type: Optional[str]) -> list[str]:
+        """Get test file patterns based on project type."""
+        patterns = []
+
+        if project_type == "python":
+            patterns = ["**/test_*.py", "**/*_test.py", "**/tests/**/*.py"]
+        elif project_type == "node":
+            patterns = ["**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/test/**/*.js", "**/test/**/*.ts"]
+        elif project_type == "ios":
+            patterns = ["**/*Tests.swift", "**/*Test.swift", "**/Tests/**/*.swift"]
+        elif project_type == "android":
+            patterns = ["**/*Test.kt", "**/*Test.java", "**/test/**/*.kt", "**/test/**/*.java"]
+        elif project_type == "go":
+            patterns = ["**/*_test.go"]
+        elif project_type == "rust":
+            patterns = ["**/tests/**/*.rs"]
+        else:
+            # Generic test patterns
+            patterns = [
+                "**/test_*.py", "**/*_test.py",
+                "**/*.test.js", "**/*.test.ts",
+                "**/*Test.swift", "**/*Test.kt", "**/*Test.java",
+                "**/*_test.go", "**/tests/**/*",
+            ]
+
+        return patterns
+
+    def _should_ignore(self, file_path: Path, base_path: Path) -> bool:
+        """Check if a file should be ignored."""
+        try:
+            rel_path = str(file_path.relative_to(base_path))
+        except ValueError:
+            rel_path = str(file_path)
+
+        for pattern in IGNORE_PATTERNS:
+            # Simple glob-like matching
+            if pattern.startswith("**/"):
+                check_pattern = pattern[3:]
+                if check_pattern.endswith("/**"):
+                    dir_part = check_pattern[:-3]
+                    if f"/{dir_part}/" in f"/{rel_path}" or rel_path.startswith(f"{dir_part}/"):
+                        return True
+                elif "*" in check_pattern:
+                    import fnmatch
+                    if fnmatch.fnmatch(rel_path, check_pattern) or fnmatch.fnmatch(file_path.name, check_pattern):
+                        return True
+        return False
 
     def _find_files(
         self,
         path: Path,
         patterns: Optional[list[str]] = None,
+        project_type: Optional[str] = None,
     ) -> list[Path]:
         """Find files to process."""
         if not patterns:
-            patterns = ["**/*.py", "**/*.js", "**/*.ts", "**/*.tsx"]
+            patterns = self._get_file_patterns(project_type)
 
         files = []
-        for pattern in patterns:
-            files.extend(path.glob(pattern))
+        seen = set()
 
-        # Filter and limit
-        files = [f for f in files if f.is_file()]
+        for pattern in patterns:
+            for file_path in path.glob(pattern):
+                if file_path.is_file() and file_path not in seen:
+                    if not self._should_ignore(file_path, path):
+                        files.append(file_path)
+                        seen.add(file_path)
+
+        # Sort by path for consistent ordering
+        files.sort(key=lambda f: str(f))
+
+        # Limit files
         files = files[:self.config.max_files]
 
         return files
+
+    def _review_files(self, files: list[Path], base_path: Path) -> list[CIIssue]:
+        """Review files using LLM and return issues."""
+        try:
+            from ..llm.base import get_provider
+        except ImportError:
+            logger.warning("LLM provider not available, skipping actual review")
+            return []
+
+        issues = []
+
+        # Group files into batches to avoid token limits
+        batches = self._create_review_batches(files, base_path)
+
+        for batch_num, batch in enumerate(batches, 1):
+            logger.info(f"Reviewing batch {batch_num}/{len(batches)} ({len(batch)} files)")
+
+            try:
+                batch_issues = self._review_batch(batch, base_path)
+                issues.extend(batch_issues)
+            except Exception as e:
+                logger.error(f"Error reviewing batch {batch_num}: {e}")
+                # Add an error issue for the failed batch
+                issues.append(CIIssue(
+                    file="<batch>",
+                    line=None,
+                    severity="warning",
+                    message=f"Could not review batch {batch_num}: {str(e)}",
+                ))
+
+        return issues
+
+    def _create_review_batches(
+        self,
+        files: list[Path],
+        base_path: Path,
+        max_chars_per_batch: int = 50000,
+    ) -> list[list[tuple[Path, str]]]:
+        """Create batches of files for review, respecting token limits."""
+        batches = []
+        current_batch = []
+        current_chars = 0
+
+        for file_path in files:
+            try:
+                content = file_path.read_text(errors="ignore")
+
+                # Skip very large files
+                if len(content) > 20000:
+                    logger.debug(f"Skipping large file: {file_path}")
+                    continue
+
+                # Skip binary-looking files
+                if "\x00" in content[:1000]:
+                    continue
+
+                file_chars = len(content)
+
+                if current_chars + file_chars > max_chars_per_batch and current_batch:
+                    batches.append(current_batch)
+                    current_batch = []
+                    current_chars = 0
+
+                current_batch.append((file_path, content))
+                current_chars += file_chars
+
+            except Exception as e:
+                logger.debug(f"Could not read {file_path}: {e}")
+
+        if current_batch:
+            batches.append(current_batch)
+
+        return batches
+
+    def _review_batch(
+        self,
+        batch: list[tuple[Path, str]],
+        base_path: Path,
+    ) -> list[CIIssue]:
+        """Review a batch of files with LLM."""
+        from ..llm.base import get_provider
+
+        # Build the review prompt
+        files_content = []
+        for file_path, content in batch:
+            try:
+                rel_path = file_path.relative_to(base_path)
+            except ValueError:
+                rel_path = file_path
+
+            # Add line numbers for easier reference
+            numbered_lines = []
+            for i, line in enumerate(content.split("\n"), 1):
+                numbered_lines.append(f"{i:4d} | {line}")
+            numbered_content = "\n".join(numbered_lines)
+
+            files_content.append(f"### File: {rel_path}\n```\n{numbered_content}\n```\n")
+
+        combined_content = "\n".join(files_content)
+
+        # Detect language for specialized prompts
+        extensions = set(Path(f[0]).suffix for f in batch)
+        is_swift = ".swift" in extensions
+
+        if is_swift:
+            expert_persona = """You are a Senior Staff Engineer and Swift 6 expert with 10+ years of iOS development experience.
+You have deep knowledge of:
+- Swift 6 concurrency (actors, async/await, Sendable, isolation)
+- SwiftUI best practices and performance optimization
+- Memory management and ARC
+- SOLID principles and clean architecture
+- iOS security best practices
+- Xcode and Swift compiler warnings"""
+        else:
+            expert_persona = """You are a Senior Staff Engineer with expertise in multiple languages and frameworks.
+You have deep knowledge of software architecture, security, performance, and best practices."""
+
+        review_prompt = f"""{expert_persona}
+
+Review the following code files thoroughly and identify issues. Be specific and actionable.
+
+**OUTPUT FORMAT** - For each issue, output EXACTLY this format (one per line):
+ISSUE|file_path|line_number|severity|message|suggestion
+
+Example:
+ISSUE|Luminae/App/LuminaeApp.swift|42|warning|Force unwrap could crash if nil|Use optional binding: if let value = optional {{ ... }}
+ISSUE|Luminae/Core/Network.swift|0|error|Missing error handling for network calls|Wrap in do-catch and handle specific errors
+
+**FIELDS:**
+- file_path: exact relative path as shown in the file header
+- line_number: specific line number, or 0 if applies to whole file
+- severity: "error" (bugs, security, crashes), "warning" (performance, maintainability), "info" (style, suggestions)
+- message: concise description of the issue
+- suggestion: how to fix it
+
+**REVIEW CHECKLIST:**
+ERRORS (severity: error):
+- Force unwraps that could crash (!, try!)
+- Memory leaks, retain cycles
+- Race conditions, thread safety issues
+- Security vulnerabilities (hardcoded secrets, SQL injection, etc.)
+- Unhandled errors that could crash
+
+WARNINGS (severity: warning):
+- Performance issues (N+1 queries, unnecessary recomputation)
+- Missing Swift 6 Sendable conformance where needed
+- Deprecated API usage
+- Code that violates SOLID principles
+- Missing input validation
+
+INFO (severity: info):
+- Better naming suggestions
+- Simplification opportunities
+- Documentation improvements
+
+{self.config.extra_context or ""}
+
+**FILES TO REVIEW:**
+
+{combined_content}
+
+**IMPORTANT:** Output ONLY lines starting with "ISSUE|". No other text, explanations, or markdown."""
+
+        try:
+            provider = get_provider(check_license=False)
+            response = provider.chat([
+                {"role": "user", "content": review_prompt}
+            ])
+
+            logger.debug(f"LLM response: {response.content[:500]}...")
+            return self._parse_review_response(response.content)
+
+        except Exception as e:
+            logger.error(f"LLM review failed: {e}")
+            return []
+
+    def _parse_review_response(self, response: str) -> list[CIIssue]:
+        """Parse LLM response into CIIssue objects."""
+        issues = []
+
+        for line in response.strip().split("\n"):
+            line = line.strip()
+            if not line or not line.startswith("ISSUE|"):
+                continue
+
+            parts = line.split("|")
+            if len(parts) < 5:
+                continue
+
+            try:
+                _, file_path, line_num, severity, message = parts[:5]
+                suggestion = parts[5] if len(parts) > 5 else None
+
+                # Validate severity
+                severity = severity.lower()
+                if severity not in ("error", "warning", "info"):
+                    severity = "warning"
+
+                # Parse line number
+                try:
+                    line_number = int(line_num) if line_num and line_num != "0" else None
+                except ValueError:
+                    line_number = None
+
+                issues.append(CIIssue(
+                    file=file_path.strip(),
+                    line=line_number,
+                    severity=severity,
+                    message=message.strip(),
+                    suggestion=suggestion.strip() if suggestion else None,
+                ))
+
+            except Exception as e:
+                logger.debug(f"Could not parse issue line: {line} - {e}")
+
+        return issues
 
     def output(self) -> str:
         """Get formatted output."""
