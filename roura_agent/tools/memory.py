@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from ..memory import ProjectMemory, RAGMemory
+from ..memory import LegacyProjectMemory as ProjectMemory, RAGMemory
 from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 # Cache for project memory instances

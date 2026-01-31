@@ -219,6 +219,10 @@ def _run_agent(
     from .agent.loop import AgentLoop
     from .llm import ProviderType, detect_available_providers, get_provider
     from .onboarding import check_and_run_onboarding, clear_screen, get_tier_display
+    from .shutdown import install_signal_handlers
+
+    # Install signal handlers for graceful shutdown
+    install_signal_handlers()
 
     # Clear the terminal for a clean start
     clear_screen()
@@ -376,9 +380,19 @@ def _run_agent(
 @app.command()
 def doctor(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    export: bool = typer.Option(False, "--export", "-e", help="Export support bundle (ZIP with diagnostics)"),
 ):
     """Run system health diagnostics."""
+    from .tools.doctor import create_support_bundle
+
     results = run_all_checks()
+
+    if export:
+        bundle_path = create_support_bundle()
+        console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS} Support bundle created: {bundle_path}[/{Colors.SUCCESS}]")
+        console.print(f"[{Colors.DIM}]Share this file when reporting issues.[/{Colors.DIM}]")
+        return
+
     output = format_results(results, use_json=json_output)
     console.print(output)
 

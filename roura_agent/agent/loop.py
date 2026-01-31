@@ -40,6 +40,12 @@ from ..branding import Colors, Icons, Styles, format_error
 from ..errors import RouraError
 from ..llm import LLMProvider, LLMResponse, ProviderType, ToolCall, get_provider
 from ..session import Session, SessionManager
+from ..shutdown import (
+    CancellationScope,
+    is_shutdown_requested,
+    register_cleanup,
+    unregister_cleanup,
+)
 from ..stream import check_for_escape
 from ..tools.base import RiskLevel, ToolResult, registry
 from ..tools.schema import registry_to_json_schema
@@ -880,14 +886,25 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
         # Setup prompt with tab completion
         from ..prompt import prompt_input
 
+        # Register cleanup callback for graceful shutdown
+        def cleanup():
+            self._auto_save_session()
+
+        register_cleanup(cleanup)
+
         try:
-            while True:
+            while not is_shutdown_requested():
                 try:
                     # Prompt with tab completion
                     user_input = prompt_input("> ").strip()
 
                     if not user_input:
                         continue
+
+                    # Check for shutdown during long operations
+                    if is_shutdown_requested():
+                        self.console.print("[dim]Shutting down...[/dim]")
+                        break
 
                     # Handle commands
                     if user_input.lower() in ("exit", "quit", "/exit", "/quit"):
@@ -997,6 +1014,8 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
                     self.console.print("\n[dim]Goodbye![/dim]")
                     break
         finally:
+            # Unregister cleanup callback
+            unregister_cleanup(cleanup)
             # Save session on exit
             self._auto_save_session()
             self.console.print(f"[{Colors.DIM}]Session saved.[/{Colors.DIM}]")

@@ -1,6 +1,12 @@
 """
 Roura Agent Streaming - Live token streaming with ESC interrupt support.
 
+Features:
+- Live token streaming with blinking cursor
+- ESC key to interrupt
+- Integration with shutdown system for graceful cancellation
+- Race-free interrupt handling
+
 © Roura.io
 """
 from __future__ import annotations
@@ -20,6 +26,7 @@ from rich.spinner import Spinner
 from rich.text import Text
 
 from .ollama import get_base_url, get_model
+from .shutdown import is_shutdown_requested, request_interrupt
 
 
 @dataclass
@@ -31,7 +38,18 @@ class StreamResult:
 
 
 def check_for_escape() -> bool:
-    """Check if ESC key was pressed (non-blocking, drains buffer)."""
+    """
+    Check if ESC key was pressed or shutdown requested (non-blocking).
+
+    This function:
+    - Checks for ESC key press (non-blocking)
+    - Checks global shutdown state
+    - Drains input buffer to prevent ghost keypresses
+    """
+    # First check global shutdown state
+    if is_shutdown_requested():
+        return True
+
     if not sys.stdin.isatty():
         return False
 
@@ -46,6 +64,7 @@ def check_for_escape() -> bool:
                 char = sys.stdin.read(1)
                 if char == '\x1b':  # ESC
                     found_escape = True
+                    request_interrupt()  # Set global interrupt flag
                     # Drain any remaining escape sequence chars
                     while select.select([sys.stdin], [], [], 0.01)[0]:
                         sys.stdin.read(1)
