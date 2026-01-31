@@ -14,7 +14,7 @@ Constraints:
 5. Max tool calls per turn limit
 6. Never hallucinate file contents
 7. Never modify files not read
-8. ESC to interrupt
+8. Ctrl+C to interrupt
 
 © Roura.io
 """
@@ -42,11 +42,12 @@ from ..llm import LLMProvider, LLMResponse, ProviderType, ToolCall, get_provider
 from ..session import Session, SessionManager
 from ..shutdown import (
     CancellationScope,
+    clear_interrupt,
+    is_interrupt_requested,
     is_shutdown_requested,
     register_cleanup,
     unregister_cleanup,
 )
-from ..stream import check_for_escape
 from ..tools.base import RiskLevel, ToolResult, registry
 from ..tools.schema import registry_to_json_schema
 from .context import AgentContext
@@ -575,13 +576,13 @@ Now respond to the user:"""
             with Live(
                 get_thinking_display(),
                 console=self.console,
-                refresh_per_second=20,  # Higher refresh for responsive ESC
+                refresh_per_second=10,
                 transient=True,
             ) as live:
                 try:
                     for response in llm.chat_stream(messages, tools_schema):
-                        # Check for ESC interrupt
-                        if check_for_escape():
+                        # Check for Ctrl+C interrupt
+                        if is_interrupt_requested():
                             self._interrupted = True
                             final_response = LLMResponse(
                                 content=content_buffer,
@@ -589,6 +590,7 @@ Now respond to the user:"""
                                 done=True,
                                 interrupted=True,
                             )
+                            clear_interrupt()  # Clear so we can continue
                             break
 
                         if response.content:
@@ -609,7 +611,7 @@ Now respond to the user:"""
                                 display.append(content_buffer)
                                 display.append(Icons.CURSOR_BLOCK, style=Colors.PRIMARY_BOLD)
                                 hint = Text.from_markup(
-                                    f"\n\n[{Colors.DIM}]{elapsed:.1f}s | Press ESC to interrupt[/{Colors.DIM}]"
+                                    f"\n\n[{Colors.DIM}]{elapsed:.1f}s | Ctrl+C to interrupt[/{Colors.DIM}]"
                                 )
                                 live.update(Group(display, hint))
                         else:
@@ -1149,7 +1151,7 @@ Now respond to the user:"""
             "  When using a local model (Ollama), if it struggles\n"
             "  you'll be offered to escalate to Claude or GPT-4.\n\n"
             f"[{Styles.HEADER}]Tips:[/{Styles.HEADER}]\n"
-            "  \u2022 ESC to interrupt at any time\n"
+            "  \u2022 Ctrl+C to interrupt, twice to exit\n"
             "  \u2022 I'll ask before risky operations\n"
             "  \u2022 /undo to revert file changes",
             title=f"[{Styles.HEADER}]Help[/{Styles.HEADER}]",
@@ -1170,7 +1172,7 @@ Now respond to the user:"""
 - I can read, write, and edit files in your project
 - I run shell commands and git operations
 - I work in a loop: use tools → see results → continue
-- Press **ESC** anytime to interrupt me
+- Press **Ctrl+C** to interrupt (twice to exit)
 
 *Press Enter to continue...*
 """

@@ -334,7 +334,7 @@ def _run_agent(
     info_table.add_row(left_section, right_section)
 
     # Commands hint
-    commands_hint = f"\n[{Colors.DIM}]/help[/{Colors.DIM}] commands  │  [{Colors.DIM}]/model[/{Colors.DIM}] switch  │  [{Colors.DIM}]ESC[/{Colors.DIM}] interrupt  │  [{Colors.DIM}]exit[/{Colors.DIM}] quit"
+    commands_hint = f"\n[{Colors.DIM}]/help[/{Colors.DIM}] commands  │  [{Colors.DIM}]/model[/{Colors.DIM}] switch  │  [{Colors.DIM}]Ctrl+C[/{Colors.DIM}] interrupt  │  [{Colors.DIM}]exit[/{Colors.DIM}] quit"
 
     console.print(Panel(
         Group(info_table, Text.from_markup(commands_hint)),

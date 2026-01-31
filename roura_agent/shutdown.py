@@ -21,9 +21,9 @@ from typing import Callable, Optional
 @dataclass
 class ShutdownState:
     """Global shutdown state tracking."""
-    # Shutdown requested (SIGINT/SIGTERM received)
+    # Shutdown requested (second Ctrl+C or SIGTERM)
     shutdown_requested: bool = False
-    # Interrupt requested (ESC key pressed)
+    # Interrupt requested (first Ctrl+C - stops current operation)
     interrupt_requested: bool = False
     # Lock for thread-safe access
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -33,6 +33,8 @@ class ShutdownState:
     _original_handlers: dict[int, Optional[signal.Handlers]] = field(default_factory=dict)
     # Whether handlers are installed
     _handlers_installed: bool = False
+    # Time of last interrupt (for double Ctrl+C detection)
+    _last_interrupt_time: float = 0.0
 
 
 # Global singleton
@@ -108,22 +110,42 @@ def _signal_handler(signum: int, frame) -> None:
     """
     Handle SIGINT/SIGTERM.
 
-    First signal: request graceful shutdown
-    Second signal: force exit
+    For SIGINT (Ctrl+C):
+    - First press: interrupt current operation (can continue)
+    - Second press within 2 seconds: exit CLI
+    - Third press: force exit
+
+    For SIGTERM: always shutdown
     """
+    import time
+
+    if signum == signal.SIGTERM:
+        # SIGTERM always triggers shutdown
+        request_shutdown()
+        sys.stderr.write("[Received SIGTERM, shutting down...]\n")
+        return
+
+    # SIGINT (Ctrl+C) handling
+    current_time = time.time()
+
     if _state.shutdown_requested:
-        # Second signal - force exit
+        # Already shutting down - force exit
         sys.stderr.write("\nForce exit.\n")
         sys.exit(128 + signum)
 
-    # First signal - graceful shutdown
-    request_shutdown()
+    if _state.interrupt_requested:
+        # Second Ctrl+C within 2 seconds - shutdown
+        if current_time - _state._last_interrupt_time < 2.0:
+            request_shutdown()
+            sys.stderr.write("\n[Exiting...]\n")
+            return
 
-    # Print message without disrupting the terminal
-    if signum == signal.SIGINT:
-        sys.stderr.write("\n[Shutting down...]\n")
-    elif signum == signal.SIGTERM:
-        sys.stderr.write("[Received SIGTERM, shutting down...]\n")
+    # First Ctrl+C - just interrupt current operation
+    with _state._lock:
+        _state.interrupt_requested = True
+        _state._last_interrupt_time = current_time
+
+    sys.stderr.write("\n[Interrupted - press Ctrl+C again to exit]\n")
 
 
 def install_signal_handlers() -> None:

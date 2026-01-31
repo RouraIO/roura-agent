@@ -1,0 +1,27 @@
+{
+  "id": "76cd6938-c8d4-401d-8ee4-0445d32fe9eb",
+  "created_at": "2026-01-31T17:08:38.116485Z",
+  "updated_at": "2026-01-31T17:08:38.116736Z",
+  "project_root": null,
+  "project_name": null,
+  "model": null,
+  "title": null,
+  "messages": [
+    {
+      "role": "user",
+      "content": "hi there! how are you?",
+      "timestamp": "2026-01-31T17:08:38.116725Z",
+      "tool_calls": [],
+      "tool_call_id": null
+    },
+    {
+      "role": "assistant",
+      "content": "Hi! I'm just a friendly AI assistant here to help you out, so I don't have feelings, but thanks for asking. How about yourself? What's up today?",
+      "timestamp": "2026-01-31T17:08:38.116733Z",
+      "tool_calls": [],
+      "tool_call_id": null
+    }
+  ],
+  "tool_calls": [],
+  "metadata": {}
+}

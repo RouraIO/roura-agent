@@ -340,7 +340,7 @@ ERROR_CATALOG: dict[ErrorCode, ErrorInfo] = {
     ErrorCode.AGENT_INTERRUPTED: ErrorInfo(
         code=ErrorCode.AGENT_INTERRUPTED,
         message="Operation was interrupted",
-        hint="You pressed ESC to interrupt. The partial progress has been preserved",
+        hint="You pressed Ctrl+C to interrupt. The partial progress has been preserved",
     ),
     ErrorCode.AGENT_CONTEXT_OVERFLOW: ErrorInfo(
         code=ErrorCode.AGENT_CONTEXT_OVERFLOW,
