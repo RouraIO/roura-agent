@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "notes": [
+    {
+      "content": "v2.0.1 release verified - all features working",
+      "created_at": "2026-01-30T20:32:23.026189",
+      "tags": [
+        "release",
+        "verification"
+      ],
+      "source": "agent"
+    }
+  ],
+  "sessions": [],
+  "preferences": {}
+}

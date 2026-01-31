@@ -161,11 +161,11 @@ from .shell import run_background, run_command, shell_background, shell_exec
 
 # New Phase 1 tools: Testing, Building, Linting
 from .testing import (
-    TestCoverageTool,
-    TestFailuresTool,
+    CoverageTool,
+    FailuresTool,
     TestFixTool,
-    TestLastTool,
-    TestRunTool,
+    LastFailedTool,
+    RunTestsTool,
     TestWatchTool,
     detect_test_framework,
     run_tests,
@@ -233,10 +233,10 @@ __all__ = [
     "fetch_webpage",
     "search_web",
     # Testing
-    "TestRunTool",
-    "TestFailuresTool",
-    "TestLastTool",
-    "TestCoverageTool",
+    "RunTestsTool",
+    "FailuresTool",
+    "LastFailedTool",
+    "CoverageTool",
     "TestFixTool",
     "TestWatchTool",
     "run_tests",

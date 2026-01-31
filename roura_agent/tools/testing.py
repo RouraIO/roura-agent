@@ -462,7 +462,7 @@ def run_tests(
 
 
 @dataclass
-class TestRunTool(Tool):
+class RunTestsTool(Tool):
     """Run the project's test suite."""
 
     name: str = "test.run"
@@ -504,7 +504,7 @@ class TestRunTool(Tool):
 
 
 @dataclass
-class TestFailuresTool(Tool):
+class FailuresTool(Tool):
     """Get detailed information about failing tests."""
 
     name: str = "test.failures"
@@ -544,7 +544,7 @@ class TestFailuresTool(Tool):
 
 
 @dataclass
-class TestLastTool(Tool):
+class LastFailedTool(Tool):
     """Re-run the last failed test."""
 
     name: str = "test.last"
@@ -611,7 +611,7 @@ class TestLastTool(Tool):
 
 
 @dataclass
-class TestCoverageTool(Tool):
+class CoverageTool(Tool):
     """Run tests with coverage reporting."""
 
     name: str = "test.coverage"
@@ -946,10 +946,10 @@ class TestWatchTool(Tool):
 
 
 # Create tool instances
-test_run = TestRunTool()
-test_failures = TestFailuresTool()
-test_last = TestLastTool()
-test_coverage = TestCoverageTool()
+test_run = RunTestsTool()
+test_failures = FailuresTool()
+test_last = LastFailedTool()
+test_coverage = CoverageTool()
 test_fix = TestFixTool()
 test_watch = TestWatchTool()
 

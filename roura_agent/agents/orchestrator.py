@@ -262,12 +262,12 @@ When analyzing a task, respond with:
             GitAgent,
             ResearchAgent,
             ReviewAgent,
-            TestAgent,
+            TestingAgent,
         )
 
         agent_classes = {
             "code": CodeAgent,
-            "test": TestAgent,
+            "test": TestingAgent,
             "debug": DebugAgent,
             "research": ResearchAgent,
             "git": GitAgent,

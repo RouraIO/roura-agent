@@ -2,7 +2,7 @@
 Tests for licensing module.
 """
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from roura_agent.licensing import (
     Tier,
@@ -45,7 +45,7 @@ class TestLicense:
 
     def test_license_expired(self):
         """Test expired license detection."""
-        past_date = datetime.utcnow() - timedelta(days=1)
+        past_date = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
         license = License(
             key="test-key",
             tier=Tier.PRO,

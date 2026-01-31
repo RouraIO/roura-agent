@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from fnmatch import fnmatch
 from pathlib import Path
@@ -75,7 +75,7 @@ class License:
         """Check if license is currently valid."""
         if self.valid_until is None:
             return True  # Perpetual license
-        return datetime.utcnow() < self.valid_until
+        return datetime.now(timezone.utc).replace(tzinfo=None) < self.valid_until
 
     @property
     def is_expired(self) -> bool:

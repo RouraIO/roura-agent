@@ -98,8 +98,10 @@ Summarize what you did and any files created/modified."""
         return False, 0.0
 
 
-class TestAgent(BaseAgent):
+class TestingAgent(BaseAgent):
     """Agent specialized in writing and running tests."""
+
+    __test__ = False  # Prevent pytest from collecting this class
 
     name = "test"
     description = "Writes and runs tests, checks coverage"

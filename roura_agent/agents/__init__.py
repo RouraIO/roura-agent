@@ -83,7 +83,7 @@ from .specialized import (
     GitAgent,
     ResearchAgent,
     ReviewAgent,
-    TestAgent,
+    TestingAgent,
 )
 
 
@@ -110,7 +110,7 @@ def initialize_agents(console=None, llm=None) -> Orchestrator:
     # Create and register all specialized agents
     agents = [
         CodeAgent(console=console, llm=llm),
-        TestAgent(console=console, llm=llm),
+        TestingAgent(console=console, llm=llm),
         DebugAgent(console=console, llm=llm),
         ResearchAgent(console=console, llm=llm),
         GitAgent(console=console, llm=llm),
@@ -194,7 +194,7 @@ __all__ = [
     "get_constraint_checker",
     # Specialized agents
     "CodeAgent",
-    "TestAgent",
+    "TestingAgent",
     "DebugAgent",
     "ResearchAgent",
     "GitAgent",

@@ -12,10 +12,10 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from roura_agent.tools.testing import (
-    TestRunTool,
-    TestFailuresTool,
-    TestLastTool,
-    TestCoverageTool,
+    RunTestsTool,
+    FailuresTool,
+    LastFailedTool,
+    CoverageTool,
     detect_test_framework,
     parse_pytest_output,
     parse_cargo_output,
@@ -248,12 +248,12 @@ Tests:       1 failed, 1 passed, 2 total
         assert result.success is False
 
 
-class TestTestRunTool:
-    """Tests for the TestRunTool."""
+class TestRunTestsTool:
+    """Tests for the RunTestsTool."""
 
     def test_tool_properties(self):
         """Verify tool properties."""
-        tool = TestRunTool()
+        tool = RunTestsTool()
         assert tool.name == "test.run"
         assert tool.risk_level == RiskLevel.SAFE
         assert not tool.requires_approval
@@ -272,38 +272,38 @@ class TestTestRunTool:
         (tmp_path / "conftest.py").write_text("")
 
         with patch('roura_agent.tools.testing.os.getcwd', return_value=str(tmp_path)):
-            tool = TestRunTool()
+            tool = RunTestsTool()
             result = tool.execute()
 
         assert result.success is True
         assert result.output["framework"] == "pytest"
 
 
-class TestTestFailuresTool:
-    """Tests for the TestFailuresTool."""
+class TestFailuresTool:
+    """Tests for the FailuresTool."""
 
     def test_tool_properties(self):
         """Verify tool properties."""
-        tool = TestFailuresTool()
+        tool = FailuresTool()
         assert tool.name == "test.failures"
         assert tool.risk_level == RiskLevel.SAFE
 
 
-class TestTestLastTool:
-    """Tests for the TestLastTool."""
+class TestLastFailedTool:
+    """Tests for the LastFailedTool."""
 
     def test_tool_properties(self):
         """Verify tool properties."""
-        tool = TestLastTool()
+        tool = LastFailedTool()
         assert tool.name == "test.last"
         assert tool.risk_level == RiskLevel.SAFE
 
 
-class TestTestCoverageTool:
-    """Tests for the TestCoverageTool."""
+class TestCoverageTool:
+    """Tests for the CoverageTool."""
 
     def test_tool_properties(self):
         """Verify tool properties."""
-        tool = TestCoverageTool()
+        tool = CoverageTool()
         assert tool.name == "test.coverage"
         assert tool.risk_level == RiskLevel.SAFE

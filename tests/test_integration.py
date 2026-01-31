@@ -26,7 +26,7 @@ from roura_agent.agents import (
     Orchestrator,
     # Specialized Agents
     CodeAgent,
-    TestAgent,
+    TestingAgent,
     DebugAgent,
     ResearchAgent,
     GitAgent,
@@ -82,7 +82,7 @@ class TestAgentRegistryIntegration:
 
         # Register multiple agents
         code_agent = CodeAgent(console=console)
-        test_agent = TestAgent(console=console)
+        test_agent = TestingAgent(console=console)
         debug_agent = DebugAgent(console=console)
 
         registry.register(code_agent)
@@ -100,7 +100,7 @@ class TestAgentRegistryIntegration:
         console = Mock()
 
         registry.register(CodeAgent(console=console))
-        registry.register(TestAgent(console=console))
+        registry.register(TestingAgent(console=console))
         registry.register(GitAgent(console=console))
 
         # Should have all three agents
@@ -157,7 +157,7 @@ class TestOrchestratorIntegration:
 
     def test_orchestrator_routes_to_test_agent(self):
         """Test that orchestrator routes test tasks to test agent."""
-        mock_test_agent = Mock(spec=TestAgent)
+        mock_test_agent = Mock(spec=TestingAgent)
         mock_test_agent.name = "test"
         mock_test_agent.capabilities = {AgentCapability.TEST_RUN}
         # can_handle returns (bool, confidence) tuple - high confidence

@@ -15,7 +15,7 @@ from roura_agent.agents import (
     get_registry,
     Orchestrator,
     CodeAgent,
-    TestAgent,
+    TestingAgent,
     DebugAgent,
     ResearchAgent,
     GitAgent,
@@ -118,7 +118,7 @@ class TestAgentRegistry:
         """Test listing all agents."""
         registry = AgentRegistry()
         registry.register(CodeAgent())
-        registry.register(TestAgent())
+        registry.register(TestingAgent())
 
         agents = registry.list_agents()
         assert len(agents) == 2
@@ -130,7 +130,7 @@ class TestAgentRegistry:
         """Test finding capable agents for a task."""
         registry = AgentRegistry()
         registry.register(CodeAgent())
-        registry.register(TestAgent())
+        registry.register(TestingAgent())
         registry.register(DebugAgent())
 
         # Task that matches code agent
@@ -153,7 +153,7 @@ class TestAgentRegistry:
         """Test clearing the registry."""
         registry = AgentRegistry()
         registry.register(CodeAgent())
-        registry.register(TestAgent())
+        registry.register(TestingAgent())
 
         assert len(registry) == 2
         registry.clear()
@@ -199,12 +199,12 @@ class TestCodeAgent:
         assert "clean" in prompt.lower() or "code" in prompt.lower()
 
 
-class TestTestAgent:
-    """Tests for TestAgent."""
+class TestTestingAgent:
+    """Tests for TestingAgent."""
 
     def test_can_handle_test_tasks(self):
         """Test that agent handles test-related tasks."""
-        agent = TestAgent()
+        agent = TestingAgent()
 
         can, conf = agent.can_handle("write unit tests for the parser")
         assert can is True
