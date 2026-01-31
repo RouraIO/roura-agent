@@ -568,6 +568,13 @@ class TestLastTool(Tool):
             "vitest": "npx vitest run --changed",
         }
 
+        if not framework:
+            return ToolResult(
+                success=False,
+                output=None,
+                error="Could not detect test framework"
+            )
+
         command = commands.get(framework, "")
         if not command:
             return ToolResult(
@@ -624,6 +631,13 @@ class TestCoverageTool(Tool):
 
         if not framework:
             framework = detect_test_framework(cwd)
+
+        if not framework:
+            return ToolResult(
+                success=False,
+                output=None,
+                error="Could not detect test framework"
+            )
 
         # Coverage commands by framework
         commands = {
