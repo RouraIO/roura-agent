@@ -1736,8 +1736,23 @@ roura-agent setup    # Reconfigure settings
     def _check_for_updates_notification(self) -> None:
         """Check for updates and show notification if available."""
         try:
-            from ..update import check_for_updates
-            update_info = check_for_updates()
+            from ..update import check_for_updates, VERSION_CACHE_FILE
+            import json
+
+            # Check if cache has a different version than current - if so, force refresh
+            force_check = False
+            if VERSION_CACHE_FILE.exists():
+                try:
+                    cache = json.loads(VERSION_CACHE_FILE.read_text())
+                    cached_latest = cache.get("latest_version", "")
+                    # If we're running a version >= cached latest, cache might be stale
+                    from ..constants import VERSION
+                    if VERSION >= cached_latest:
+                        force_check = True
+                except Exception:
+                    force_check = True
+
+            update_info = check_for_updates(force=force_check)
 
             if update_info and update_info.has_update:
                 self.console.print(

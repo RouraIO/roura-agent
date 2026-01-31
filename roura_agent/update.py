@@ -24,7 +24,7 @@ GITHUB_TAGS_URL = f"https://api.github.com/repos/{GITHUB_REPO}/tags"
 # Local cache for update check (don't spam GitHub API)
 CACHE_DIR = Path.home() / ".config" / "roura-agent" / "cache"
 VERSION_CACHE_FILE = CACHE_DIR / "latest_version.json"
-CHECK_INTERVAL_HOURS = 6
+CHECK_INTERVAL_HOURS = 1  # Check more frequently for updates
 
 
 @dataclass
