@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Generator, Optional
+from collections.abc import Generator
+from typing import Any, Optional
 
-from .base import LLMProvider, LLMResponse, ToolCall, ProviderType
+from .base import LLMProvider, LLMResponse, ProviderType, ToolCall
 
 
 class OpenAIProvider(LLMProvider):
@@ -63,7 +64,7 @@ class OpenAIProvider(LLMProvider):
         self._organization = organization or os.getenv("OPENAI_ORG_ID")
 
         if not self._api_key:
-            from ..errors import RouraError, ErrorCode
+            from ..errors import ErrorCode, RouraError
             raise RouraError(
                 ErrorCode.API_KEY_NOT_SET,
                 message="OpenAI API key not configured",
@@ -119,7 +120,8 @@ class OpenAIProvider(LLMProvider):
     ) -> LLMResponse:
         """Non-streaming chat completion."""
         import httpx
-        from ..errors import RouraError, ErrorCode
+
+        from ..errors import ErrorCode, RouraError
 
         payload: dict[str, Any] = {
             "model": self._model,
@@ -170,7 +172,7 @@ class OpenAIProvider(LLMProvider):
         Yields partial responses as tokens arrive.
         """
         import httpx
-        from ..errors import RouraError, ErrorCode
+
 
         payload: dict[str, Any] = {
             "model": self._model,

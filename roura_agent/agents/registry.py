@@ -5,12 +5,12 @@ Roura Agent Registry - Dynamic agent management and discovery.
 """
 from __future__ import annotations
 
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from rich.console import Console
 
 if TYPE_CHECKING:
-    from .base import BaseAgent, AgentContext
+    from .base import AgentContext, BaseAgent
 
 
 class AgentRegistry:
@@ -23,20 +23,20 @@ class AgentRegistry:
     - Singleton pattern for global access
     """
 
-    _instance: Optional["AgentRegistry"] = None
+    _instance: Optional[AgentRegistry] = None
 
     def __init__(self):
-        self._agents: dict[str, "BaseAgent"] = {}
+        self._agents: dict[str, BaseAgent] = {}
         self._console = Console()
 
     @classmethod
-    def get_instance(cls) -> "AgentRegistry":
+    def get_instance(cls) -> AgentRegistry:
         """Get the singleton registry instance."""
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
-    def register(self, agent: "BaseAgent") -> None:
+    def register(self, agent: BaseAgent) -> None:
         """
         Register an agent.
 
@@ -57,19 +57,19 @@ class AgentRegistry:
             return True
         return False
 
-    def get(self, name: str) -> Optional["BaseAgent"]:
+    def get(self, name: str) -> Optional[BaseAgent]:
         """Get an agent by name."""
         return self._agents.get(name)
 
-    def list_agents(self) -> list["BaseAgent"]:
+    def list_agents(self) -> list[BaseAgent]:
         """Get all registered agents."""
         return list(self._agents.values())
 
     def find_capable(
         self,
         task: str,
-        context: Optional["AgentContext"] = None,
-    ) -> list[tuple["BaseAgent", float]]:
+        context: Optional[AgentContext] = None,
+    ) -> list[tuple[BaseAgent, float]]:
         """
         Find agents capable of handling a task.
 
@@ -90,8 +90,8 @@ class AgentRegistry:
     def best_agent(
         self,
         task: str,
-        context: Optional["AgentContext"] = None,
-    ) -> Optional["BaseAgent"]:
+        context: Optional[AgentContext] = None,
+    ) -> Optional[BaseAgent]:
         """
         Find the best agent for a task.
 
@@ -101,7 +101,7 @@ class AgentRegistry:
         capable = self.find_capable(task, context)
         return capable[0][0] if capable else None
 
-    def has_capability(self, capability: str) -> list["BaseAgent"]:
+    def has_capability(self, capability: str) -> list[BaseAgent]:
         """Find all agents with a specific capability."""
         from .base import AgentCapability
 

@@ -7,15 +7,15 @@ Provides metrics collection, timers, and performance tracking.
 """
 from __future__ import annotations
 
-import time
 import functools
-import threading
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, TypeVar
-from datetime import datetime
+import threading
+import time
 from collections import defaultdict
 from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ class Histogram:
     def get_bucket_counts(self) -> Dict[float, int]:
         """Get counts per bucket."""
         with self._lock:
-            counts = {b: 0 for b in self.buckets}
+            counts = dict.fromkeys(self.buckets, 0)
             for v in self._values:
                 for b in self.buckets:
                     if v <= b:
@@ -208,7 +208,7 @@ class Timer:
         end = self._end_time or time.perf_counter()
         return end - self._start_time
 
-    def __enter__(self) -> "Timer":
+    def __enter__(self) -> Timer:
         self._start_time = time.perf_counter()
         return self
 

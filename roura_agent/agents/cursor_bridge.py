@@ -13,22 +13,20 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
-import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Any, Dict, List, Callable
+from typing import Any, Callable, Dict, List, Optional
 
 from rich.console import Console
 
 # Optional watchdog import for file watching
 try:
+    from watchdog.events import FileModifiedEvent, FileSystemEventHandler
     from watchdog.observers import Observer
-    from watchdog.events import FileSystemEventHandler, FileModifiedEvent
     WATCHDOG_AVAILABLE = True
 except ImportError:
     WATCHDOG_AVAILABLE = False
@@ -74,7 +72,7 @@ class CursorTask:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "CursorTask":
+    def from_dict(cls, data: Dict[str, Any]) -> CursorTask:
         return cls(
             id=data["id"],
             task=data["task"],
@@ -103,7 +101,7 @@ class CursorTaskWatcher(FileSystemEventHandler):
         if isinstance(event, FileModifiedEvent):
             if event.src_path.endswith('.json'):
                 try:
-                    with open(event.src_path, 'r') as f:
+                    with open(event.src_path) as f:
                         data = json.load(f)
                     task_id = Path(event.src_path).stem
                     self._callback(task_id, data)

@@ -11,8 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
-from .glob import IGNORE_DIRS, IGNORE_FILES, should_ignore_dir, should_ignore_file
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
+from .glob import should_ignore_dir, should_ignore_file
 
 
 @dataclass
@@ -56,7 +56,7 @@ def grep_file(
     matches = []
 
     try:
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+        with open(filepath, encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
 
         for i, line in enumerate(lines, start=1):

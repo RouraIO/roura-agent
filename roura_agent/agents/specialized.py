@@ -11,17 +11,13 @@ Each agent has:
 from __future__ import annotations
 
 import re
-from typing import Optional, Any
-
-from rich.console import Console
+from typing import Optional
 
 from .base import (
-    BaseAgent,
     AgentCapability,
     AgentContext,
-    AgentResult,
+    BaseAgent,
 )
-from .executor import ToolPermissions
 
 
 class CodeAgent(BaseAgent):

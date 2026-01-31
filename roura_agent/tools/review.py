@@ -13,13 +13,12 @@ Game-changing features:
 from __future__ import annotations
 
 import re
-import os
+from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
-from dataclasses import dataclass, field
-from collections import defaultdict
 
-from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 
 @dataclass

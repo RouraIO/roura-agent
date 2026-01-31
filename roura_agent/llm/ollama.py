@@ -7,14 +7,15 @@ from __future__ import annotations
 
 import json
 import os
-import threading
 import queue
-from typing import Any, Generator, Optional
+import threading
+from collections.abc import Generator
+from typing import Any, Optional
 
 import httpx
 
-from .base import LLMProvider, LLMResponse, ToolCall, ProviderType
-from ..errors import RouraError, ErrorCode, handle_connection_error
+from ..errors import ErrorCode, RouraError, handle_connection_error
+from .base import LLMProvider, LLMResponse, ProviderType, ToolCall
 
 
 class OllamaProvider(LLMProvider):
@@ -386,7 +387,7 @@ class OllamaProvider(LLMProvider):
                 args = data.get("arguments") or data.get("args") or data.get("parameters") or data.get("input") or {}
                 if name:
                     tool_calls.append(ToolCall(
-                        id=f"text_call_0",
+                        id="text_call_0",
                         name=name,
                         arguments=args if isinstance(args, dict) else {},
                     ))

@@ -6,9 +6,10 @@ Roura Agent LLM Base - Abstract base classes for LLM providers.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Generator, Optional, Type
+from typing import Any, Callable, Optional, Type
 
 
 class ProviderType(Enum):
@@ -233,7 +234,7 @@ def _check_provider_license(provider_type: ProviderType) -> None:
     Raises:
         LicenseError: If provider requires a higher tier
     """
-    from ..licensing import is_feature_enabled, require_feature
+    from ..licensing import require_feature
 
     feature_map = {
         ProviderType.OPENAI: "provider.openai",
@@ -274,6 +275,7 @@ def get_provider(
         >>> provider = get_provider()  # Auto-detect
     """
     import os
+
     from ..licensing import is_feature_enabled
 
     if provider_type is not None:

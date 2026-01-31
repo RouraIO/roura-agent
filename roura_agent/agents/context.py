@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional, Any, Dict, List
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -53,10 +53,10 @@ class SharedExecutionContext:
     Thread-safe for parallel agent execution.
     """
 
-    _instance: Optional["SharedExecutionContext"] = None
+    _instance: Optional[SharedExecutionContext] = None
     _lock = threading.Lock()
 
-    def __new__(cls) -> "SharedExecutionContext":
+    def __new__(cls) -> SharedExecutionContext:
         """Singleton pattern with thread safety."""
         if cls._instance is None:
             with cls._lock:
@@ -84,7 +84,7 @@ class SharedExecutionContext:
             cls._instance = None
 
     @classmethod
-    def get_instance(cls) -> "SharedExecutionContext":
+    def get_instance(cls) -> SharedExecutionContext:
         """Get the singleton instance."""
         return cls()
 
@@ -323,11 +323,11 @@ class SharedExecutionContext:
                 "session_id": self._session_id,
                 "project_root": self._project_root,
                 "files_read_count": len(self._files_read),
-                "files_modified_count": len(set(m.path for m in self._modifications)),
+                "files_modified_count": len({m.path for m in self._modifications}),
                 "tool_calls_count": len(self._tool_history),
                 "undo_available": len(self._undo_stack),
                 "agents_used": list(
-                    set(h.get("agent") for h in self._tool_history if h.get("agent"))
+                    {h.get("agent") for h in self._tool_history if h.get("agent")}
                 ),
             }
 

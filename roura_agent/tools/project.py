@@ -5,14 +5,12 @@ Roura Agent Project Tools - Analyze and understand large codebases.
 """
 from __future__ import annotations
 
-import os
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
-from collections import defaultdict
 
-from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
-
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 # File extensions by language
 LANGUAGE_EXTENSIONS = {

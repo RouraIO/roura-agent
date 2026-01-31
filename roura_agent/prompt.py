@@ -5,14 +5,14 @@ Roura Agent Prompt - Interactive input with tab completion.
 """
 from __future__ import annotations
 
-from typing import Optional, Callable
+from pathlib import Path
+from typing import Optional
+
 from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import Completer, Completion, WordCompleter
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
-from prompt_toolkit.formatted_text import HTML
-from pathlib import Path
-
 
 # Slash commands with descriptions
 COMMANDS = {
@@ -49,7 +49,7 @@ class RouraCompleter(Completer):
 
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
-        word = document.get_word_before_cursor()
+        document.get_word_before_cursor()
 
         # If line starts with /, complete commands
         if text.startswith("/"):

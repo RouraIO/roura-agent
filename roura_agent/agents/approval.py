@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Optional, Any, Dict, List, Callable, Set
 from datetime import datetime
 from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from ..tools.base import RiskLevel
 
@@ -69,10 +69,10 @@ class ApprovalManager:
     Thread-safe for parallel agent execution.
     """
 
-    _instance: Optional["ApprovalManager"] = None
+    _instance: Optional[ApprovalManager] = None
     _lock = threading.Lock()
 
-    def __new__(cls) -> "ApprovalManager":
+    def __new__(cls) -> ApprovalManager:
         """Singleton pattern with thread safety."""
         if cls._instance is None:
             with cls._lock:
@@ -99,7 +99,7 @@ class ApprovalManager:
             cls._instance = None
 
     @classmethod
-    def get_instance(cls) -> "ApprovalManager":
+    def get_instance(cls) -> ApprovalManager:
         """Get the singleton instance."""
         return cls()
 
@@ -392,7 +392,7 @@ def create_console_approval_callback(console: Any) -> ApprovalCallback:
         }.get(request.risk_level, "white")
 
         console.print()
-        console.print(f"[bold]Approval Required[/bold]")
+        console.print("[bold]Approval Required[/bold]")
         console.print(f"  Agent: {request.agent}")
         console.print(f"  Tool: {request.tool_name}")
         console.print(f"  Risk: [{risk_color}]{request.risk_level.value}[/{risk_color}]")

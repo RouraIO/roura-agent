@@ -14,9 +14,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
-from datetime import datetime
 
-from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 
 class CellType(Enum):
@@ -37,7 +36,7 @@ class NotebookCell:
     cell_id: Optional[str] = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "NotebookCell":
+    def from_dict(cls, data: Dict[str, Any]) -> NotebookCell:
         """Create a cell from notebook JSON."""
         source = data.get("source", [])
         if isinstance(source, list):
@@ -113,7 +112,7 @@ class Notebook:
     path: Optional[Path] = None
 
     @classmethod
-    def from_file(cls, path: Union[str, Path]) -> "Notebook":
+    def from_file(cls, path: Union[str, Path]) -> Notebook:
         """Load a notebook from a file."""
         path = Path(path)
         if not path.exists():
@@ -122,7 +121,7 @@ class Notebook:
         if not path.suffix.lower() == ".ipynb":
             raise ValueError(f"Not a notebook file: {path}")
 
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
 
         cells = [NotebookCell.from_dict(c) for c in data.get("cells", [])]
@@ -136,7 +135,7 @@ class Notebook:
         )
 
     @classmethod
-    def create_new(cls, kernel_name: str = "python3") -> "Notebook":
+    def create_new(cls, kernel_name: str = "python3") -> Notebook:
         """Create a new empty notebook."""
         return cls(
             cells=[],
@@ -243,7 +242,7 @@ class Notebook:
                 lines.append(cell.source)
                 lines.append("")
             elif cell.cell_type == CellType.MARKDOWN:
-                lines.append(f"# %% [markdown]")
+                lines.append("# %% [markdown]")
                 for line in cell.source.split("\n"):
                     lines.append(f"# {line}")
                 lines.append("")

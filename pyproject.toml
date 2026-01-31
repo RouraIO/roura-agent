@@ -73,6 +73,11 @@ ignore = [
   "E501",   # line too long (handled by formatter)
   "B008",   # function call in argument defaults
   "B905",   # zip without strict
+  "UP006",  # non-pep585-annotation (dict instead of Dict) - need 3.9 support
+  "UP007",  # non-pep604-annotation-union (use X | Y instead of Union[X, Y]) - need 3.10+
+  "UP035",  # deprecated-import - need 3.9 support
+  "UP037",  # quoted-annotation - style preference
+  "UP045",  # non-pep604-annotation-optional (use X | None instead of Optional[X]) - need 3.10+
 ]
 
 [tool.ruff.lint.isort]

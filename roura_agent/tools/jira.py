@@ -6,14 +6,13 @@ Roura Agent Jira Tools - Jira integration via REST API.
 from __future__ import annotations
 
 import os
-import json
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urljoin
 
 import httpx
 
-from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 
 def get_jira_config() -> tuple[Optional[str], Optional[str], Optional[str]]:

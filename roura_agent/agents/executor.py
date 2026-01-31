@@ -10,15 +10,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Optional, Any, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Optional
 
 from rich.console import Console
 
-from ..tools.base import Tool, ToolResult, RiskLevel, registry as tool_registry
+from ..tools.base import RiskLevel, Tool, ToolResult
+from ..tools.base import registry as tool_registry
 from ..tools.schema import tools_to_json_schema
 
 if TYPE_CHECKING:
-    from ..llm import LLMResponse, ToolCall
+    pass
 
 
 @dataclass

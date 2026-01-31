@@ -5,7 +5,6 @@ Roura Agent Lint & Format Tools - Auto-detect and run linters/formatters.
 """
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
@@ -13,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .base import Tool, RiskLevel, ToolResult, ToolParam, registry
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 
 @dataclass
@@ -817,7 +816,7 @@ class TypecheckFixTool(Tool):
             if not path.exists():
                 return {"error": f"File not found: {file_path}"}
 
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 all_lines = f.readlines()
 
             total_lines = len(all_lines)
@@ -926,7 +925,7 @@ class TypecheckFixTool(Tool):
         except subprocess.TimeoutExpired:
             return ToolResult(
                 success=False,
-                error=f"Type checker timed out after 300 seconds"
+                error="Type checker timed out after 300 seconds"
             )
         except Exception as e:
             return ToolResult(

@@ -10,14 +10,14 @@ Provides:
 © Roura.io
 """
 from .persistent import (
-    ProjectMemory,
     MemoryNote,
-    SessionSummary,
-    get_memory,
+    MemorySearchIndex,
+    ProjectMemory,
+    RAGMemory,
     # RAG / Search
     SearchResult,
-    MemorySearchIndex,
-    RAGMemory,
+    SessionSummary,
+    get_memory,
     tokenize,
 )
 

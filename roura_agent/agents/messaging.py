@@ -5,18 +5,18 @@ Roura Agent Messaging - Inter-agent communication and task coordination.
 """
 from __future__ import annotations
 
-import uuid
-import threading
 import queue
+import threading
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Callable, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Optional
 
 from rich.console import Console
 
 if TYPE_CHECKING:
-    from .base import AgentContext, AgentResult
+    from .base import AgentResult
 
 
 class MessagePriority(Enum):
@@ -52,7 +52,7 @@ class AgentMessage:
     status: MessageStatus = MessageStatus.PENDING
     created_at: datetime = field(default_factory=datetime.now)
     completed_at: Optional[datetime] = None
-    result: Optional["AgentResult"] = None
+    result: Optional[AgentResult] = None
     parent_id: Optional[str] = None  # For task chains
     metadata: dict = field(default_factory=dict)
 
@@ -81,7 +81,7 @@ class MessageBus:
     - Task chaining (one agent can spawn subtasks)
     """
 
-    _instance: Optional["MessageBus"] = None
+    _instance: Optional[MessageBus] = None
 
     def __init__(self, console: Optional[Console] = None):
         self._console = console or Console()
@@ -94,7 +94,7 @@ class MessageBus:
         self._worker_thread: Optional[threading.Thread] = None
 
     @classmethod
-    def get_instance(cls, console: Optional[Console] = None) -> "MessageBus":
+    def get_instance(cls, console: Optional[Console] = None) -> MessageBus:
         """Get the singleton message bus."""
         if cls._instance is None:
             cls._instance = cls(console)
@@ -103,7 +103,7 @@ class MessageBus:
     def register_handler(
         self,
         agent_name: str,
-        handler: Callable[[AgentMessage], "AgentResult"],
+        handler: Callable[[AgentMessage], AgentResult],
     ) -> None:
         """Register a message handler for an agent."""
         with self._lock:

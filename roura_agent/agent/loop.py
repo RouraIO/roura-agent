@@ -21,31 +21,30 @@ Constraints:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional, Any
+from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
+from typing import Any, Optional
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.markdown import Markdown
-from rich.prompt import Prompt, Confirm
-from rich.text import Text
-from rich.table import Table
+from rich.console import Console, Group
 from rich.live import Live
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.prompt import Prompt
 from rich.spinner import Spinner
-from rich.console import Group
+from rich.table import Table
+from rich.text import Text
 
+from ..agents import Orchestrator, get_registry, initialize_agents
+from ..branding import Colors, Icons, Styles, format_error
+from ..errors import RouraError
+from ..llm import LLMProvider, LLMResponse, ProviderType, ToolCall, get_provider
+from ..session import Session, SessionManager
+from ..stream import check_for_escape
+from ..tools.base import RiskLevel, ToolResult, registry
+from ..tools.schema import registry_to_json_schema
 from .context import AgentContext
 from .summarizer import ContextSummarizer
-from ..llm import LLMProvider, LLMResponse, ToolCall, get_provider, ProviderType
-from ..tools.base import registry, ToolResult, RiskLevel
-from ..tools.schema import registry_to_json_schema
-from ..stream import check_for_escape
-from ..errors import RouraError, ErrorCode
-from ..branding import Colors, Icons, Styles, format_error
-from ..session import SessionManager, Session
-from ..agents import Orchestrator, get_registry, initialize_agents
 
 
 class AgentState(Enum):
@@ -768,7 +767,7 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
 
         if needs_project_context and not has_specific_files and self.context.project_root:
             # Add brief hint to explore first
-            return user_input + f"\n\n[Hint: Use fs.list to discover files first]"
+            return user_input + "\n\n[Hint: Use fs.list to discover files first]"
 
         return user_input
 
@@ -842,9 +841,7 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
         # Check LLM availability
         try:
             llm = self._get_llm()
-            model_info = f"Model: {llm.model_name}"
-            tools_info = "Native tools" if llm.supports_tools() else "Text-based tools"
-            provider_info = f"Provider: {llm.provider_type.value}"
+            "Native tools" if llm.supports_tools() else "Text-based tools"
         except RouraError as e:
             self.console.print(Panel(
                 e.format_for_user(),
@@ -906,7 +903,7 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
                         continue
 
                     if user_input.lower() in ("/clear", "/reset"):
-                        old_count = len(self.context.messages)
+                        len(self.context.messages)
                         self.context.clear()
                         # Re-add system message
                         system_prompt = self.BASE_SYSTEM_PROMPT
@@ -1220,7 +1217,7 @@ roura-agent setup    # Reconfigure settings
 
     def _show_upgrade(self) -> None:
         """Show upgrade options and pricing."""
-        from ..licensing import get_current_tier, Tier
+        from ..licensing import Tier, get_current_tier
 
         current_tier = get_current_tier()
 
@@ -1258,9 +1255,9 @@ roura-agent setup    # Reconfigure settings
         if current_tier == Tier.FREE:
             self.console.print(f"[{Colors.PRIMARY_BOLD}]Upgrade to PRO:[/{Colors.PRIMARY_BOLD}]")
             self.console.print()
-            self.console.print(f"  Monthly:  https://buy.stripe.com/3cI28r8zl0tG92b6Cb5kk00")
-            self.console.print(f"  Annual:   https://buy.stripe.com/14A7sL2aXa4g5PZ0dN5kk01")
-            self.console.print(f"  Lifetime: https://buy.stripe.com/4gMfZh8zl90c3HR3pZ5kk02")
+            self.console.print("  Monthly:  https://buy.stripe.com/3cI28r8zl0tG92b6Cb5kk00")
+            self.console.print("  Annual:   https://buy.stripe.com/14A7sL2aXa4g5PZ0dN5kk01")
+            self.console.print("  Lifetime: https://buy.stripe.com/4gMfZh8zl90c3HR3pZ5kk02")
             self.console.print()
             self.console.print(f"[{Colors.DIM}]After purchase, use /license to enter your key.[/{Colors.DIM}]")
         else:
@@ -1270,11 +1267,17 @@ roura-agent setup    # Reconfigure settings
 
     def _manage_license(self) -> None:
         """View or enter license key."""
-        from ..licensing import get_current_tier, get_current_license, validate_license_key, clear_license_cache, Tier
-        from ..onboarding import GLOBAL_ENV_FILE, load_env_file, save_env_file
         import os
 
-        current_tier = get_current_tier()
+        from ..licensing import (
+            clear_license_cache,
+            get_current_license,
+            get_current_tier,
+            validate_license_key,
+        )
+        from ..onboarding import GLOBAL_ENV_FILE, load_env_file, save_env_file
+
+        get_current_tier()
         current_license = get_current_license()
 
         self.console.print()
@@ -1379,7 +1382,7 @@ roura-agent setup    # Reconfigure settings
 
     def _switch_model(self, provider_name: Optional[str] = None) -> None:
         """Switch to a different LLM provider."""
-        from ..llm import detect_available_providers, get_provider, ProviderType
+        from ..llm import ProviderType, detect_available_providers, get_provider
 
         available = detect_available_providers()
 
@@ -1518,7 +1521,7 @@ roura-agent setup    # Reconfigure settings
 
     def _do_update(self) -> None:
         """Perform update and check for new features requiring setup."""
-        from ..update import perform_update, check_for_updates, check_new_features_setup
+        from ..update import check_for_updates, check_new_features_setup, perform_update
 
         # Show current version
         update_info = check_for_updates(force=True)

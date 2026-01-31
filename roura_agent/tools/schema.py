@@ -9,7 +9,6 @@ from typing import Any, Type
 
 from .base import Tool, ToolParam, ToolRegistry
 
-
 # Python type to JSON Schema type mapping
 TYPE_MAP: dict[Type, str] = {
     str: "string",

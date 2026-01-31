@@ -11,14 +11,14 @@ Provides:
 """
 from __future__ import annotations
 
-import os
 import json
 import logging
-from pathlib import Path
-from dataclasses import dataclass, field, asdict
-from typing import Any, Optional, TypeVar, Generic, Callable
-from enum import Enum
+import os
 import stat
+from dataclasses import asdict, dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import Any, Generic, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ class Config:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Config":
+    def from_dict(cls, data: dict) -> Config:
         return cls(
             ollama=OllamaConfig(**data.get("ollama", {})),
             jira=JiraConfig(**data.get("jira", {})),
@@ -97,7 +97,7 @@ class Credentials:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Credentials":
+    def from_dict(cls, data: dict) -> Credentials:
         return cls(**data)
 
 
@@ -652,7 +652,7 @@ class RouraConfig:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "RouraConfig":
+    def from_dict(cls, data: dict[str, Any]) -> RouraConfig:
         """Create config from dictionary."""
         config = cls()
 

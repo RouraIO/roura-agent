@@ -10,8 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
 from ..secrets import check_before_commit, format_secret_warning
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 
 def run_git_command(args: list[str], cwd: Optional[str] = None) -> tuple[bool, str, str]:
@@ -475,7 +475,7 @@ class GitCommitTool(Tool):
             return ToolResult(
                 success=False,
                 output=None,
-                error=f"BLOCKED: Secrets detected in staged files.\n\n" + "\n\n".join(warnings),
+                error="BLOCKED: Secrets detected in staged files.\n\n" + "\n\n".join(warnings),
             )
 
         # Run git commit

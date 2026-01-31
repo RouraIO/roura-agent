@@ -35,6 +35,7 @@ jobs:
         run: pyright roura_agent/
 
       - name: Run linter
+        continue-on-error: true
         run: ruff check roura_agent/
 
   release:

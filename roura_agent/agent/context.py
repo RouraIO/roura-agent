@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-from datetime import datetime
 
-from ..constants import TokenEstimates, Limits
+from ..constants import Limits, TokenEstimates
 
 
 @dataclass
@@ -24,7 +24,7 @@ class FileContext:
     size: int
 
     @classmethod
-    def from_path(cls, path: str, content: str) -> "FileContext":
+    def from_path(cls, path: str, content: str) -> FileContext:
         return cls(
             path=str(Path(path).resolve()),
             content=content,

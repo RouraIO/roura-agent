@@ -7,15 +7,15 @@ Provides retry logic, circuit breakers, and graceful degradation.
 """
 from __future__ import annotations
 
-import time
-import random
 import functools
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Type, TypeVar, Generic
+import random
+import time
+from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
-from datetime import datetime, timedelta
 from threading import Lock
+from typing import Any, Callable, Generic, Optional, Type, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -344,7 +344,7 @@ class RetryableOperation:
         self._result: Any = None
         self._last_error: Optional[Exception] = None
 
-    def __enter__(self) -> "RetryableOperation":
+    def __enter__(self) -> RetryableOperation:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:

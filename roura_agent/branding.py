@@ -15,9 +15,6 @@ Usage:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-
 # ASCII Art Logo - Main brand identifier
 LOGO = """
 [cyan]
@@ -31,6 +28,7 @@ LOGO = """
 
 # Import version from constants (single source of truth)
 from .constants import VERSION as _VERSION
+
 
 # Dynamic logo - use function to get at runtime
 def get_logo() -> str:

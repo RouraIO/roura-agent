@@ -19,14 +19,11 @@ from typing import Optional
 
 from rich.console import Console
 from rich.panel import Panel
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
-from rich.prompt import Prompt, Confirm
-from rich.text import Text
 
-from .branding import get_logo, Colors, Icons, BRAND_NAME, BRAND_TAGLINE
-from .config import CONFIG_FILE, Config, load_config, save_config
-from .licensing import Tier, validate_license_key, get_current_tier, clear_license_cache
-
+from .branding import BRAND_NAME, BRAND_TAGLINE, Colors, Icons, get_logo
+from .licensing import Tier, clear_license_cache, get_current_tier, validate_license_key
 
 # .env file location (current working directory)
 ENV_FILE = Path.cwd() / ".env"
@@ -616,7 +613,7 @@ def run_onboarding(console: Optional[Console] = None) -> bool:
 
     # Determine where to save
     save_global = Confirm.ask(
-        f"Save to global config (~/.config/roura-agent/.env)? (No = save to current directory)",
+        "Save to global config (~/.config/roura-agent/.env)? (No = save to current directory)",
         default=True,
     )
 

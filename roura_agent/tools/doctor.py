@@ -12,7 +12,6 @@ Enhanced for v1.7.0 with:
 """
 from __future__ import annotations
 
-import io
 import json
 import os
 import platform
@@ -20,7 +19,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -48,7 +47,7 @@ class CheckResult:
 def check_os_version() -> CheckResult:
     """Check macOS version and architecture."""
     system = platform.system()
-    release = platform.release()
+    platform.release()
     machine = platform.machine()
     version = platform.mac_ver()[0] if system == "Darwin" else platform.version()
 
@@ -110,7 +109,6 @@ def check_python_version() -> CheckResult:
 
 def check_install_path() -> CheckResult:
     """Check installation path and method."""
-    exe_path = sys.executable
     script_path = Path(__file__).resolve()
 
     # Detect install method
@@ -158,7 +156,6 @@ def check_config_paths() -> CheckResult:
     data_path = get_data_path()
 
     paths_info = []
-    all_ok = True
 
     for name, path in [("config", config_path), ("cache", cache_path), ("data", data_path)]:
         if path.exists():
@@ -366,7 +363,7 @@ def check_network_connectivity() -> CheckResult:
     for name, url in test_urls:
         try:
             with httpx.Client(timeout=5.0) as client:
-                response = client.get(url)
+                client.get(url)
                 reachable.append(name)
         except Exception:
             unreachable.append(name)
@@ -441,7 +438,7 @@ def format_results(results: list[CheckResult], use_json: bool = False) -> str:
 
     for result in results:
         icon = status_icons[result.status]
-        status_color = {
+        {
             CheckStatus.PASS: "",
             CheckStatus.FAIL: "",
             CheckStatus.WARN: "",

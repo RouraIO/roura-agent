@@ -12,11 +12,11 @@ Provides:
 from __future__ import annotations
 
 import json
-import re
-import math
 import logging
+import math
+import re
 from collections import Counter
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -36,7 +36,7 @@ class MemoryNote:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "MemoryNote":
+    def from_dict(cls, data: dict) -> MemoryNote:
         return cls(**data)
 
 
@@ -53,7 +53,7 @@ class SessionSummary:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "SessionSummary":
+    def from_dict(cls, data: dict) -> SessionSummary:
         return cls(**data)
 
 
@@ -209,7 +209,7 @@ class ProjectMemory:
             json.dump(data, f, indent=2)
 
     @classmethod
-    def load(cls, root: str | Path) -> "ProjectMemory":
+    def load(cls, root: str | Path) -> ProjectMemory:
         """
         Load memory from disk or create new.
 
@@ -225,7 +225,7 @@ class ProjectMemory:
         memory_file = memory.memory_file
         if memory_file.exists():
             try:
-                with open(memory_file, "r") as f:
+                with open(memory_file) as f:
                     data = json.load(f)
 
                 memory.notes = [
@@ -673,7 +673,7 @@ class RAGMemory:
         cls,
         project_root: Optional[str | Path] = None,
         embedding_func: Optional[Callable[[str], list[float]]] = None,
-    ) -> "RAGMemory":
+    ) -> RAGMemory:
         """
         Create RAGMemory from project directory.
 

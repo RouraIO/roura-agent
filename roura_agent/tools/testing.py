@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .base import Tool, RiskLevel, ToolResult, ToolParam, registry
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 
 @dataclass
@@ -308,7 +308,7 @@ def parse_go_output(output: str) -> TestResult:
         re.DOTALL
     )
 
-    for test_name, duration, body in failure_matches:
+    for test_name, _duration, body in failure_matches:
         failure = TestFailure(test_name=test_name)
 
         # Extract file location
@@ -718,7 +718,7 @@ class TestFixTool(Tool):
             if not path.exists():
                 return {"error": f"File not found: {file_path}"}
 
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
 
             total_lines = len(lines)
@@ -758,7 +758,7 @@ class TestFixTool(Tool):
             if not path.exists():
                 return {"error": f"Test file not found: {file_path}"}
 
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 content = f.read()
 
             return {
@@ -800,7 +800,7 @@ class TestFixTool(Tool):
         # Analyze failures with rich context
         failures_with_context = []
 
-        for i, failure in enumerate(result.failures[:max_failures]):
+        for _i, failure in enumerate(result.failures[:max_failures]):
             failure_info = {
                 "test_name": failure.test_name,
                 "error_type": failure.error_type,

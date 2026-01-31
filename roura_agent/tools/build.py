@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .base import Tool, RiskLevel, ToolResult, ToolParam, registry
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 
 @dataclass
@@ -576,7 +576,7 @@ class BuildFixTool(Tool):
             if not path.exists():
                 return {"error": f"File not found: {file_path}"}
 
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
 
             total_lines = len(lines)
@@ -631,7 +631,7 @@ class BuildFixTool(Tool):
         # Analyze errors with rich context
         errors_with_context = []
 
-        for i, error in enumerate(result.errors[:max_errors]):
+        for _i, error in enumerate(result.errors[:max_errors]):
             error_info = {
                 "file_path": error.file_path,
                 "line_number": error.line_number,

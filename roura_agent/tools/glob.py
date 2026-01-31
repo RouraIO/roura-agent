@@ -11,8 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
-
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 # Directories to always ignore
 IGNORE_DIRS = {

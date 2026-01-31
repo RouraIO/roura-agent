@@ -13,53 +13,32 @@ This module provides:
 
 © Roura.io
 """
-from .base import BaseAgent, AgentCapability, AgentContext, AgentResult
-from .registry import AgentRegistry, get_registry
-from .orchestrator import Orchestrator
-from .executor import (
-    ToolExecutorMixin,
-    ExecutionContext,
-    FileContext,
-    ToolPermissions,
-)
 from .agent_loop import (
     AgentLoop,
     AgentLoopConfig,
 )
-from .context import (
-    SharedExecutionContext,
-    FileSnapshot,
-    ModificationRecord,
-    get_shared_context,
-)
 from .approval import (
+    ApprovalDecision,
     ApprovalManager,
     ApprovalMode,
     ApprovalRequest,
-    ApprovalDecision,
-    get_approval_manager,
     create_console_approval_callback,
+    get_approval_manager,
 )
+from .base import AgentCapability, AgentContext, AgentResult, BaseAgent
 from .constraints import (
-    ConstraintChecker,
-    ConstraintViolation,
-    ConstraintResult,
-    ViolationResult,
     AgentConstraints,
+    ConstraintChecker,
+    ConstraintResult,
+    ConstraintViolation,
+    ViolationResult,
     get_constraint_checker,
 )
-from .specialized import (
-    CodeAgent,
-    TestAgent,
-    DebugAgent,
-    ResearchAgent,
-    GitAgent,
-    ReviewAgent,
-)
-from .integrations import (
-    CursorAgent,
-    XcodeAgent,
-    IDEBridgeAgent,
+from .context import (
+    FileSnapshot,
+    ModificationRecord,
+    SharedExecutionContext,
+    get_shared_context,
 )
 from .cursor_bridge import (
     CursorBridge,
@@ -67,23 +46,44 @@ from .cursor_bridge import (
     CursorTaskStatus,
     create_cursor_bridge,
 )
+from .executor import (
+    ExecutionContext,
+    FileContext,
+    ToolExecutorMixin,
+    ToolPermissions,
+)
+from .integrations import (
+    CursorAgent,
+    IDEBridgeAgent,
+    XcodeAgent,
+)
 from .messaging import (
-    MessageBus,
     AgentMessage,
+    MessageBus,
     MessagePriority,
     MessageStatus,
     get_message_bus,
     send_to_agent,
 )
+from .orchestrator import Orchestrator
 from .parallel import (
+    DependencyGraph,
+    ExecutionPlan,
+    ParallelAgentRunner,
     ParallelExecutor,
     ParallelTask,
-    TaskStatus,
-    ExecutionPlan,
-    DependencyGraph,
     ResourceManager,
-    ParallelAgentRunner,
+    TaskStatus,
     run_agents_parallel,
+)
+from .registry import AgentRegistry, get_registry
+from .specialized import (
+    CodeAgent,
+    DebugAgent,
+    GitAgent,
+    ResearchAgent,
+    ReviewAgent,
+    TestAgent,
 )
 
 

@@ -18,13 +18,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Optional
-from logging.handlers import RotatingFileHandler
-from dataclasses import dataclass, field, asdict
 
 from .constants import Defaults, Paths
 from .secrets import redact_secrets_in_content

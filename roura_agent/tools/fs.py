@@ -7,18 +7,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
-from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
-from ..secrets import check_before_write, format_secret_warning, is_secret_file
 from ..safety import (
-    check_path_allowed,
     check_modification_allowed,
-    record_modification,
-    is_dry_run,
-    is_readonly,
+    check_path_allowed,
     check_write_allowed,
+    record_modification,
 )
+from ..secrets import check_before_write, format_secret_warning, is_secret_file
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 
 @dataclass
@@ -58,7 +55,7 @@ class FsReadTool(Tool):
                     error=f"Not a file: {path}",
                 )
 
-            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            with open(file_path, encoding="utf-8", errors="replace") as f:
                 all_lines = f.readlines()
 
             total_lines = len(all_lines)
@@ -277,10 +274,9 @@ class FsWriteTool(Tool):
 
             # Track if this is a new file or overwrite
             is_new = not file_path.exists()
-            old_content = None
             if not is_new:
                 try:
-                    old_content = file_path.read_text(encoding="utf-8", errors="replace")
+                    file_path.read_text(encoding="utf-8", errors="replace")
                 except Exception:
                     pass
 

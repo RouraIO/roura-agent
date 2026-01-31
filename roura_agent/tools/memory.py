@@ -15,9 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
 from ..memory import ProjectMemory, RAGMemory
-
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 # Cache for project memory instances
 _memory_cache: dict[str, ProjectMemory] = {}

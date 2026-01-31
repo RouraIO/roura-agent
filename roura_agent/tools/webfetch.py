@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Optional
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
-
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 # Default timeout for requests
 DEFAULT_TIMEOUT = 30.0

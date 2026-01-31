@@ -7,14 +7,11 @@ from __future__ import annotations
 
 import os
 import subprocess
-import shlex
-import signal
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
-
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 # Commands that are always blocked
 BLOCKED_COMMANDS = {

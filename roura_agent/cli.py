@@ -5,42 +5,54 @@ Roura Agent CLI - Local-first AI coding assistant.
 """
 from __future__ import annotations
 
-import os
-import sys
 import json
-import typer
+import os
 from pathlib import Path
-from typing import Optional
+
+import typer
 from rich.console import Console, Group
 from rich.panel import Panel
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
-from rich.prompt import Prompt, Confirm
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
-from rich.live import Live
-from rich.status import Status
 
-from .ollama import list_models, get_base_url, get_model
-from .tools.doctor import run_all_checks, format_results, has_critical_failures
-from .tools.fs import read_file, list_directory, write_file, edit_file, fs_write, fs_edit
-from .tools.git import get_status, get_diff, get_log, stage_files, create_commit, git_add, git_commit
-from .tools.shell import run_command, shell_exec
-from .tools.base import registry
-from .config import (
-    load_config, save_config, load_credentials, save_credentials,
-    apply_config_to_env, get_effective_config, detect_project,
-    Config, Credentials, CONFIG_FILE, CREDENTIALS_FILE,
-)
 from .branding import (
-    get_logo, Colors, Icons, Styles,
-    format_error, format_success, format_warning,
-    format_diff, format_diff_line, get_risk_color,
+    Colors,
+    Icons,
+    format_diff_line,
+    get_logo,
+    get_risk_color,
+)
+from .config import (
+    CONFIG_FILE,
+    CREDENTIALS_FILE,
+    apply_config_to_env,
+    detect_project,
+    get_effective_config,
+    load_config,
+    load_credentials,
+    save_config,
+    save_credentials,
 )
 from .constants import VERSION
-from .safety import SafetyMode, BlastRadiusLimits
+from .ollama import get_base_url, list_models
+from .safety import BlastRadiusLimits, SafetyMode
 
 # Import these to ensure tools are registered
-from .tools import github, jira
+from .tools.base import registry
+from .tools.doctor import format_results, has_critical_failures, run_all_checks
+from .tools.fs import edit_file, fs_edit, fs_write, list_directory, read_file, write_file
+from .tools.git import (
+    create_commit,
+    get_diff,
+    get_log,
+    get_status,
+    git_add,
+    git_commit,
+    stage_files,
+)
+from .tools.shell import run_command, shell_exec
+
 
 # Version callback for --version flag
 def version_callback(value: bool):
@@ -203,9 +215,10 @@ def _run_agent(
     resume: str = None,
 ):
     """Launch the interactive agent."""
-    from .agent.loop import AgentLoop, AgentConfig as LoopConfig
+    from .agent.loop import AgentConfig as LoopConfig
+    from .agent.loop import AgentLoop
+    from .llm import ProviderType, detect_available_providers, get_provider
     from .onboarding import check_and_run_onboarding, clear_screen, get_tier_display
-    from .llm import get_provider, detect_available_providers, ProviderType
 
     # Clear the terminal for a clean start
     clear_screen()
@@ -282,7 +295,6 @@ def _run_agent(
     available = detect_available_providers()
 
     # Build info panel with two sections
-    from rich.columns import Columns
 
     # Left section: Model & Session info
     left_section = (
@@ -382,7 +394,6 @@ def tools():
     table.add_column("Risk", justify="center")
     table.add_column("Description")
 
-    from .tools.base import RiskLevel
 
     for name, tool in sorted(registry._tools.items()):
         color = get_risk_color(tool.risk_level.value)
@@ -444,7 +455,7 @@ def config():
 
     console.print(table)
     console.print(f"\n[dim]Config file: {CONFIG_FILE}[/dim]")
-    console.print(f"[dim]Run 'roura-agent setup' to configure interactively[/dim]")
+    console.print("[dim]Run 'roura-agent setup' to configure interactively[/dim]")
 
 
 @app.command()
@@ -592,7 +603,12 @@ def reset(
     force: bool = typer.Option(False, "--force", "-y", help="Skip confirmation"),
 ):
     """Factory reset - clear all settings and restart onboarding."""
-    from .onboarding import ONBOARDING_MARKER, GLOBAL_ENV_FILE, WALKTHROUGH_MARKER, LAST_PROVIDER_FILE
+    from .onboarding import (
+        GLOBAL_ENV_FILE,
+        LAST_PROVIDER_FILE,
+        ONBOARDING_MARKER,
+        WALKTHROUGH_MARKER,
+    )
 
     console.print(Panel(
         "[bold yellow]Factory Reset[/bold yellow]\n\n"
@@ -1120,7 +1136,7 @@ def shell_exec_cmd(
     else:
         output = result.output
         if output["exit_code"] == 0:
-            console.print(f"[green]✓[/green] Command succeeded")
+            console.print("[green]✓[/green] Command succeeded")
         else:
             console.print(f"[yellow]Exit code: {output['exit_code']}[/yellow]")
 
@@ -1212,7 +1228,7 @@ def mcp_connect_cmd(
     name: str = typer.Argument(..., help="Name of the server to connect"),
 ):
     """Connect to an MCP server."""
-    from .tools.mcp import get_mcp_manager, MCPServerStatus
+    from .tools.mcp import MCPServerStatus, get_mcp_manager
 
     manager = get_mcp_manager()
     server = manager.get_server(name)
@@ -1527,14 +1543,14 @@ def memory_clear_cmd(
 @app.command()
 def status():
     """Show system status overview."""
-    from .tools.base import registry, RiskLevel
+    from .tools.base import registry
 
     # Provider status
     console.print("[bold cyan]System Status[/bold cyan]\n")
 
     # Check providers
     console.print("[bold]Providers:[/bold]")
-    from .llm import detect_available_providers, ProviderType
+    from .llm import ProviderType, detect_available_providers
     available = detect_available_providers()
     for pt in ProviderType:
         status = "[green]✓[/green]" if pt in available else "[dim]✗[/dim]"
@@ -1572,7 +1588,6 @@ def completion(
     shell: str = typer.Argument(..., help="Shell type: bash, zsh, fish, powershell"),
 ):
     """Generate shell completion script."""
-    import subprocess
 
     shell_map = {
         "bash": "bash",
@@ -1674,7 +1689,7 @@ def _enable_safe_mode() -> None:
     This removes all tools with RiskLevel.DANGEROUS from the registry,
     preventing them from being called during the session.
     """
-    from .tools.base import registry, RiskLevel
+    from .tools.base import RiskLevel, registry
 
     # Get list of dangerous tools to remove
     dangerous_tools = [
@@ -1700,6 +1715,7 @@ def where():
 def chat_once(prompt: str):
     """One-shot chat with the local model (deprecated)."""
     import time
+
     from .ollama import generate
 
     start = time.perf_counter()

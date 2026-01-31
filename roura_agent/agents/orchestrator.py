@@ -6,17 +6,17 @@ Roura Agent Orchestrator - Main agent that delegates to specialized agents.
 from __future__ import annotations
 
 import re
-from typing import Optional, Any
+from typing import Any, Optional
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 from .base import (
-    BaseAgent,
     AgentCapability,
     AgentContext,
     AgentResult,
+    BaseAgent,
 )
 from .registry import get_registry
 
@@ -252,17 +252,17 @@ When analyzing a task, respond with:
 
         Returns a specialized agent instance.
         """
-        from .specialized import (
-            CodeAgent,
-            TestAgent,
-            DebugAgent,
-            ResearchAgent,
-            GitAgent,
-            ReviewAgent,
-        )
         from .integrations import (
             CursorAgent,
             XcodeAgent,
+        )
+        from .specialized import (
+            CodeAgent,
+            DebugAgent,
+            GitAgent,
+            ResearchAgent,
+            ReviewAgent,
+            TestAgent,
         )
 
         agent_classes = {

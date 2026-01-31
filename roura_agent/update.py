@@ -6,17 +6,15 @@ Roura Agent Update System - Check for and apply updates.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
-from datetime import datetime, timedelta
 
 import httpx
 
 from .constants import VERSION, VERSION_TUPLE
-
 
 # GitHub repo for version checking
 GITHUB_REPO = "RouraIO/roura-agent"
@@ -154,7 +152,6 @@ def perform_update(console) -> bool:
 
     Returns True if update succeeded, False otherwise.
     """
-    from rich.panel import Panel
     from .branding import Colors, Icons
 
     console.print(f"\n[{Colors.PRIMARY}]Checking for updates...[/{Colors.PRIMARY}]")
@@ -257,7 +254,7 @@ def perform_update(console) -> bool:
 
     else:
         console.print(f"[{Colors.WARNING}]Cannot auto-update. Please update manually:[/{Colors.WARNING}]")
-        console.print(f"  pip install --upgrade roura-agent")
+        console.print("  pip install --upgrade roura-agent")
         return False
 
 
@@ -268,8 +265,9 @@ def check_new_features_setup(console) -> None:
     Called after update to configure any new features.
     """
     from rich.prompt import Confirm
+
     from .branding import Colors, Icons
-    from .onboarding import GLOBAL_ENV_FILE, load_env_file, save_env_file
+    from .onboarding import GLOBAL_ENV_FILE, load_env_file
 
     update_info = check_for_updates()
     if not update_info or not update_info.new_features:

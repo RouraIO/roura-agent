@@ -8,18 +8,16 @@ See: https://modelcontextprotocol.io/
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import subprocess
-import sys
 import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
-from concurrent.futures import ThreadPoolExecutor, Future
+from typing import Any, Dict, List, Optional
 
-from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 
 class MCPTransportType(Enum):
@@ -153,7 +151,7 @@ class MCPServer:
                 self.status = MCPServerStatus.ERROR
                 return False
 
-        except Exception as e:
+        except Exception:
             self.status = MCPServerStatus.ERROR
             return False
 
@@ -208,7 +206,7 @@ class MCPServer:
             self.status = MCPServerStatus.ERROR
             return False
 
-        except Exception as e:
+        except Exception:
             self.status = MCPServerStatus.ERROR
             if self._process:
                 self._process.terminate()
@@ -399,10 +397,10 @@ class MCPServer:
 class MCPManager:
     """Manager for MCP server connections."""
 
-    _instance: Optional["MCPManager"] = None
+    _instance: Optional[MCPManager] = None
     _lock = threading.Lock()
 
-    def __new__(cls) -> "MCPManager":
+    def __new__(cls) -> MCPManager:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -418,7 +416,7 @@ class MCPManager:
         self._config_path: Optional[Path] = None
 
     @classmethod
-    def get_instance(cls) -> "MCPManager":
+    def get_instance(cls) -> MCPManager:
         """Get the singleton instance."""
         return cls()
 

@@ -5,19 +5,18 @@ Roura Agent IDE Integrations - Cursor, Xcode, and other IDE agents.
 """
 from __future__ import annotations
 
-import subprocess
-import json
 import os
-from typing import Optional, Any
+import subprocess
 from pathlib import Path
+from typing import Any, Optional
 
 from rich.console import Console
 
 from .base import (
-    BaseAgent,
     AgentCapability,
     AgentContext,
     AgentResult,
+    BaseAgent,
 )
 
 

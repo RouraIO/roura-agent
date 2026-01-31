@@ -8,16 +8,13 @@ Provides tools for analyzing images using vision models.
 from __future__ import annotations
 
 import base64
-import mimetypes
 import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
-from io import BytesIO
 
-from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
-
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 # Supported image formats
 SUPPORTED_FORMATS = {
@@ -51,7 +48,7 @@ class ImageData:
     height: Optional[int] = None
 
     @classmethod
-    def from_file(cls, path: Union[str, Path]) -> "ImageData":
+    def from_file(cls, path: Union[str, Path]) -> ImageData:
         """Create ImageData from a file path."""
         path = Path(path)
         if not path.exists():
@@ -85,7 +82,7 @@ class ImageData:
         )
 
     @classmethod
-    def from_url(cls, url: str) -> "ImageData":
+    def from_url(cls, url: str) -> ImageData:
         """Create ImageData from a URL."""
         # Basic URL validation
         if not url.startswith(("http://", "https://")):
@@ -105,7 +102,7 @@ class ImageData:
         )
 
     @classmethod
-    def from_base64(cls, data: str, media_type: str = "image/png") -> "ImageData":
+    def from_base64(cls, data: str, media_type: str = "image/png") -> ImageData:
         """Create ImageData from base64 encoded data."""
         # Remove data URL prefix if present
         if data.startswith("data:"):
@@ -354,8 +351,9 @@ def create_vision_callback():
     def vision_callback(prompt: str, images: list[dict]) -> str:
         """Analyze images using the LLM provider."""
         try:
-            from ..llm.base import get_provider, ProviderType
             import os
+
+            from ..llm.base import ProviderType, get_provider
 
             # Prefer Anthropic for vision (best vision capabilities)
             if os.getenv("ANTHROPIC_API_KEY"):

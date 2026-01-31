@@ -21,7 +21,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
 
-from .tools.base import Tool, ToolRegistry, registry as global_registry
+from .tools.base import Tool, ToolRegistry
+from .tools.base import registry as global_registry
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,7 @@ class Plugin(ABC):
         pass
 
     @abstractmethod
-    def activate(self, context: "PluginContext") -> None:
+    def activate(self, context: PluginContext) -> None:
         """
         Activate the plugin.
 
@@ -165,7 +166,7 @@ class PluginContext:
 
     def __init__(
         self,
-        manager: "PluginManager",
+        manager: PluginManager,
         registry: ToolRegistry,
     ):
         self._manager = manager

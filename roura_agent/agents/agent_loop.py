@@ -10,21 +10,21 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
-from typing import Optional, Any, Callable, Generator, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable, Optional
 
 from rich.console import Console
 from rich.live import Live
-from rich.text import Text
 from rich.markdown import Markdown
+from rich.text import Text
 
-from .base import AgentContext, AgentResult
-from .executor import ToolExecutorMixin, ExecutionContext, ToolPermissions
 from ..tools.base import registry as tool_registry
 from ..tools.schema import tools_to_json_schema
+from .base import AgentContext, AgentResult
+from .executor import ExecutionContext, ToolPermissions
 
 if TYPE_CHECKING:
-    from ..llm import LLMProvider, LLMResponse, ToolCall
+    from ..llm import LLMProvider, LLMResponse
 
 
 @dataclass
@@ -58,7 +58,7 @@ class AgentLoop:
         self,
         agent_name: str,
         system_prompt: str,
-        llm: "LLMProvider",
+        llm: LLMProvider,
         console: Optional[Console] = None,
         config: Optional[AgentLoopConfig] = None,
         allowed_tools: Optional[set[str]] = None,
@@ -275,7 +275,7 @@ class AgentLoop:
         else:
             self.console.print(f"  [{style}]{icon}[/{style}]")
 
-    def _stream_response(self) -> "LLMResponse":
+    def _stream_response(self) -> LLMResponse:
         """Stream LLM response with live display."""
         tools_schema = self.get_tools_schema()
         content_buffer = ""
@@ -298,7 +298,7 @@ class AgentLoop:
                 for response in self.llm.chat_stream(self._messages, tools_schema):
                     if response.content:
                         content_buffer = response.content
-                        elapsed = time.time() - start_time
+                        time.time() - start_time
                         display = Text()
                         display.append(content_buffer)
                         display.append("█", style="cyan bold")

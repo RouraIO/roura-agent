@@ -85,9 +85,9 @@ class Tool(ABC):
 class ToolRegistry:
     """Registry for all available tools."""
 
-    _instance: Optional["ToolRegistry"] = None
+    _instance: Optional[ToolRegistry] = None
 
-    def __new__(cls) -> "ToolRegistry":
+    def __new__(cls) -> ToolRegistry:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._tools: Dict[str, Tool] = {}

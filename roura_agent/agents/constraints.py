@@ -14,11 +14,11 @@ from __future__ import annotations
 import re
 import threading
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional, Any, Dict, List, Set, Callable
 from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
 
-from .context import get_shared_context, SharedExecutionContext
+from .context import SharedExecutionContext, get_shared_context
 
 
 class ConstraintViolation(Enum):
@@ -84,10 +84,10 @@ class ConstraintChecker:
     Thread-safe for parallel agent execution.
     """
 
-    _instance: Optional["ConstraintChecker"] = None
+    _instance: Optional[ConstraintChecker] = None
     _lock = threading.Lock()
 
-    def __new__(cls) -> "ConstraintChecker":
+    def __new__(cls) -> ConstraintChecker:
         """Singleton pattern with thread safety."""
         if cls._instance is None:
             with cls._lock:
@@ -220,7 +220,7 @@ class ConstraintChecker:
             cls._instance = None
 
     @classmethod
-    def get_instance(cls) -> "ConstraintChecker":
+    def get_instance(cls) -> ConstraintChecker:
         """Get the singleton instance."""
         return cls()
 
@@ -457,7 +457,7 @@ class ConstraintChecker:
             if re.search(pattern, command, re.IGNORECASE):
                 return ViolationResult(
                     violation=ConstraintViolation.PATTERN_BLOCKED,
-                    message=f"Dangerous shell command pattern detected",
+                    message="Dangerous shell command pattern detected",
                     tool_name="shell.exec",
                     args={"command": command},
                     agent=agent,

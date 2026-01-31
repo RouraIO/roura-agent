@@ -8,14 +8,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Any, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from rich.console import Console
 
 if TYPE_CHECKING:
     from ..llm import LLMProvider
     from .executor import ExecutionContext
-    from .agent_loop import AgentLoop, AgentLoopConfig
 
 
 class AgentCapability(Enum):
@@ -102,16 +101,16 @@ class BaseAgent(ABC):
     def __init__(
         self,
         console: Optional[Console] = None,
-        llm: Optional["LLMProvider"] = None,
+        llm: Optional[LLMProvider] = None,
     ):
         self.console = console or Console()
         self._llm = llm
         self._tools: list[str] = []  # Deprecated: use allowed_tools instead
-        self._execution_context: Optional["ExecutionContext"] = None
+        self._execution_context: Optional[ExecutionContext] = None
         self._approval_callback: Optional[Callable[[str, dict], bool]] = None
 
     @property
-    def llm(self) -> "LLMProvider":
+    def llm(self) -> LLMProvider:
         """Get LLM provider, creating default if needed."""
         if self._llm is None:
             from ..llm import get_provider
@@ -206,7 +205,7 @@ class BaseAgent(ABC):
         }
         return iterations.get(self.name, 10)
 
-    def set_execution_context(self, context: "ExecutionContext") -> None:
+    def set_execution_context(self, context: ExecutionContext) -> None:
         """Set shared execution context (for multi-agent scenarios)."""
         self._execution_context = context
 

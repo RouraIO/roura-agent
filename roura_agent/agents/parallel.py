@@ -11,23 +11,20 @@ This module enables:
 """
 from __future__ import annotations
 
-import asyncio
 import threading
-import time
-from concurrent.futures import ThreadPoolExecutor, Future, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Any, Dict, List, Callable, Set, TYPE_CHECKING
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set
 
 from rich.console import Console
 from rich.live import Live
 from rich.table import Table
-from rich.progress import Progress, TaskID, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 if TYPE_CHECKING:
-    from .base import BaseAgent, AgentContext, AgentResult
+    from .base import AgentContext, AgentResult, BaseAgent
 
 
 class TaskStatus(Enum):
@@ -46,10 +43,10 @@ class ParallelTask:
     id: str
     agent_name: str
     task: str
-    context: Optional["AgentContext"] = None
+    context: Optional[AgentContext] = None
     dependencies: Set[str] = field(default_factory=set)  # IDs of tasks this depends on
     status: TaskStatus = TaskStatus.PENDING
-    result: Optional["AgentResult"] = None
+    result: Optional[AgentResult] = None
     error: Optional[str] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
@@ -99,7 +96,7 @@ class DependencyGraph:
         agent_name: str,
         task: str,
         depends_on: Optional[List[str]] = None,
-        context: Optional["AgentContext"] = None,
+        context: Optional[AgentContext] = None,
     ) -> ParallelTask:
         """Add a task to the graph."""
         parallel_task = ParallelTask(
@@ -265,7 +262,7 @@ class ParallelExecutor:
 
     def __init__(
         self,
-        agents: Dict[str, "BaseAgent"],
+        agents: Dict[str, BaseAgent],
         console: Optional[Console] = None,
         max_workers: int = 5,
         max_llm_calls: int = 3,
@@ -514,7 +511,7 @@ class ParallelAgentRunner:
 
     def __init__(
         self,
-        agents: Optional[Dict[str, "BaseAgent"]] = None,
+        agents: Optional[Dict[str, BaseAgent]] = None,
         console: Optional[Console] = None,
     ):
         self._console = console or Console()
@@ -522,7 +519,7 @@ class ParallelAgentRunner:
         self._tasks: List[Dict[str, Any]] = []
         self._task_counter = 0
 
-    def register_agent(self, name: str, agent: "BaseAgent") -> None:
+    def register_agent(self, name: str, agent: BaseAgent) -> None:
         """Register an agent for parallel execution."""
         self._agents[name] = agent
 
@@ -590,7 +587,7 @@ class ParallelAgentRunner:
 # Convenience function
 def run_agents_parallel(
     tasks: List[Dict[str, Any]],
-    agents: Dict[str, "BaseAgent"],
+    agents: Dict[str, BaseAgent],
     console: Optional[Console] = None,
     show_progress: bool = True,
 ) -> List[ParallelTask]:

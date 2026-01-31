@@ -150,7 +150,7 @@ def scan_content(content: str, filename: Optional[str] = None) -> list[SecretMat
         List of SecretMatch objects for detected secrets
     """
     matches = []
-    lines = content.split("\n")
+    content.split("\n")
 
     for pattern_name, secret_type, pattern, min_length in SECRET_PATTERNS:
         for match in re.finditer(pattern, content):
@@ -193,7 +193,7 @@ def scan_content(content: str, filename: Optional[str] = None) -> list[SecretMat
 def scan_file(file_path: str) -> list[SecretMatch]:
     """Scan a file for secrets."""
     try:
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+        with open(file_path, encoding="utf-8", errors="replace") as f:
             content = f.read()
         return scan_content(content, filename=file_path)
     except Exception:

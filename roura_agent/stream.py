@@ -5,20 +5,19 @@ Roura Agent Streaming - Live token streaming with ESC interrupt support.
 """
 from __future__ import annotations
 
-import sys
 import select
+import sys
 import termios
 import tty
-from typing import Optional, Callable
 from dataclasses import dataclass
+from typing import Callable, Optional
 
 import httpx
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.text import Text
 from rich.spinner import Spinner
+from rich.text import Text
 
 from .ollama import get_base_url, get_model
 

@@ -20,10 +20,10 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from .constants import Paths
 
@@ -52,7 +52,7 @@ class SessionMessage:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "SessionMessage":
+    def from_dict(cls, data: dict) -> SessionMessage:
         return cls(**data)
 
 
@@ -70,7 +70,7 @@ class SessionToolCall:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "SessionToolCall":
+    def from_dict(cls, data: dict) -> SessionToolCall:
         return cls(**data)
 
 
@@ -155,7 +155,7 @@ class Session:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Session":
+    def from_dict(cls, data: dict) -> Session:
         return cls(
             id=data["id"],
             created_at=data["created_at"],

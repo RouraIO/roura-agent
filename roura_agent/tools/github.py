@@ -5,12 +5,12 @@ Roura Agent GitHub Tools - GitHub integration via gh CLI.
 """
 from __future__ import annotations
 
-import subprocess
 import json
+import subprocess
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .base import Tool, ToolParam, ToolResult, RiskLevel, registry
+from .base import RiskLevel, Tool, ToolParam, ToolResult, registry
 
 
 def run_gh_command(args: list[str], cwd: Optional[str] = None) -> tuple[bool, str, str]:

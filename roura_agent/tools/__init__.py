@@ -3,123 +3,134 @@ Roura Agent Tools - CLI-callable, approval-gated tools.
 
 © Roura.io
 """
-from .base import Tool, ToolResult, ToolParam, RiskLevel, ToolRegistry, registry
-from .doctor import run_all_checks, format_results, has_critical_failures
-from .fs import fs_read, fs_list, fs_write, fs_edit, read_file, list_directory, write_file, edit_file
-from .git import (
-    git_status, git_diff, git_log, git_add, git_commit,
-    get_status, get_diff, get_log, stage_files, create_commit,
+from .base import RiskLevel, Tool, ToolParam, ToolRegistry, ToolResult, registry
+from .build import (
+    BuildCleanTool,
+    BuildErrorsTool,
+    BuildFixTool,
+    BuildRunTool,
+    BuildWatchTool,
+    detect_build_system,
+    run_build,
 )
-from .shell import shell_exec, shell_background, run_command, run_background
+from .doctor import format_results, has_critical_failures, run_all_checks
+from .fs import (
+    edit_file,
+    fs_edit,
+    fs_list,
+    fs_read,
+    fs_write,
+    list_directory,
+    read_file,
+    write_file,
+)
+from .git import (
+    create_commit,
+    get_diff,
+    get_log,
+    get_status,
+    git_add,
+    git_commit,
+    git_diff,
+    git_log,
+    git_status,
+    stage_files,
+)
 from .github import (
-    github_pr_list, github_pr_view, github_pr_create,
-    github_issue_list, github_issue_view, github_issue_create,
+    github_issue_create,
+    github_issue_list,
+    github_issue_view,
+    github_pr_create,
+    github_pr_list,
+    github_pr_view,
     github_repo_view,
 )
-from .jira import (
-    jira_search, jira_issue, jira_create,
-    jira_transition, jira_comment, jira_my_issues,
-)
-from .schema import (
-    tool_to_json_schema,
-    tools_to_json_schema,
-    registry_to_json_schema,
-    get_tool_names,
-    get_tool_descriptions,
-)
-from .glob import glob_tool, find_files
+from .glob import find_files, glob_tool
 from .grep import grep_tool, search_files
-from .memory import memory_store, memory_recall, memory_clear, store_note, recall_notes, clear_memory
-from .webfetch import web_fetch, web_search, fetch_webpage, search_web
-
-# New Phase 1 tools: Testing, Building, Linting
-from .testing import (
-    TestRunTool,
-    TestFailuresTool,
-    TestLastTool,
-    TestCoverageTool,
-    TestFixTool,
-    TestWatchTool,
-    run_tests,
-    detect_test_framework,
+from .image import (
+    ImageAnalyzer,
+    ImageAnalyzeTool,
+    ImageCompareTool,
+    ImageData,
+    ImageFromUrlTool,
+    ImageInfo,
+    ImageReadTool,
+    ImageSource,
+    ImageToBase64Tool,
+    analyze_image,
+    compare_images,
+    create_vision_callback,
+    get_image_analyzer,
+    read_image,
+    set_image_analyzer,
 )
-from .build import (
-    BuildRunTool,
-    BuildErrorsTool,
-    BuildCleanTool,
-    BuildFixTool,
-    BuildWatchTool,
-    run_build,
-    detect_build_system,
+from .jira import (
+    jira_comment,
+    jira_create,
+    jira_issue,
+    jira_my_issues,
+    jira_search,
+    jira_transition,
 )
 from .lint import (
-    LintRunTool,
-    LintFixTool,
-    FormatRunTool,
     FormatCheckTool,
-    TypecheckRunTool,
+    FormatRunTool,
+    LintFixTool,
+    LintRunTool,
     TypecheckFixTool,
-    run_lint,
-    detect_linter,
+    TypecheckRunTool,
     detect_formatter,
+    detect_linter,
     detect_typechecker,
+    run_lint,
 )
 
 # Phase 6: Claude Code Feature Parity
 from .mcp import (
-    MCPManager,
-    MCPServer,
-    MCPServerConfig,
-    MCPServerStatus,
-    MCPTransportType,
-    MCPToolDefinition,
-    MCPResourceDefinition,
-    MCPPromptDefinition,
-    MCPListServersTool,
-    MCPListToolsTool,
     MCPCallToolTool,
     MCPConnectTool,
     MCPDisconnectTool,
+    MCPListServersTool,
+    MCPListToolsTool,
+    MCPManager,
+    MCPPromptDefinition,
+    MCPResourceDefinition,
+    MCPServer,
+    MCPServerConfig,
+    MCPServerStatus,
+    MCPToolDefinition,
+    MCPTransportType,
+    call_mcp_tool,
     get_mcp_manager,
     list_mcp_servers,
     list_mcp_tools,
-    call_mcp_tool,
 )
-from .image import (
-    ImageData,
-    ImageSource,
-    ImageInfo,
-    ImageAnalyzer,
-    ImageReadTool,
-    ImageAnalyzeTool,
-    ImageCompareTool,
-    ImageToBase64Tool,
-    ImageFromUrlTool,
-    get_image_analyzer,
-    set_image_analyzer,
-    create_vision_callback,
-    read_image,
-    analyze_image,
-    compare_images,
+from .memory import (
+    clear_memory,
+    memory_clear,
+    memory_recall,
+    memory_store,
+    recall_notes,
+    store_note,
 )
 from .notebook import (
-    Notebook,
-    NotebookCell,
     CellType,
+    Notebook,
+    NotebookAddCellTool,
+    NotebookCell,
+    NotebookClearOutputsTool,
+    NotebookCreateTool,
+    NotebookEditTool,
+    NotebookExecuteTool,
     NotebookExecutor,
     NotebookReadTool,
-    NotebookEditTool,
-    NotebookAddCellTool,
     NotebookRemoveCellTool,
-    NotebookExecuteTool,
-    NotebookCreateTool,
     NotebookToPythonTool,
-    NotebookClearOutputsTool,
-    get_notebook_executor,
-    read_notebook,
+    create_notebook,
     edit_notebook_cell,
     execute_notebook,
-    create_notebook,
+    get_notebook_executor,
+    read_notebook,
 )
 from .project import (
     analyze_project,
@@ -130,15 +141,36 @@ from .project import (
     project_summary,
 )
 from .review import (
-    review_file,
-    review_diff,
-    review_project,
-    suggest_fixes,
-    code_review_file,
     code_review_diff,
+    code_review_file,
     code_review_project,
     code_suggest_fixes,
+    review_diff,
+    review_file,
+    review_project,
+    suggest_fixes,
 )
+from .schema import (
+    get_tool_descriptions,
+    get_tool_names,
+    registry_to_json_schema,
+    tool_to_json_schema,
+    tools_to_json_schema,
+)
+from .shell import run_background, run_command, shell_background, shell_exec
+
+# New Phase 1 tools: Testing, Building, Linting
+from .testing import (
+    TestCoverageTool,
+    TestFailuresTool,
+    TestFixTool,
+    TestLastTool,
+    TestRunTool,
+    TestWatchTool,
+    detect_test_framework,
+    run_tests,
+)
+from .webfetch import fetch_webpage, search_web, web_fetch, web_search
 
 __all__ = [
     # Base

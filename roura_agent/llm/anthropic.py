@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Generator, Optional
+from collections.abc import Generator
+from typing import Any, Optional
 
-from .base import LLMProvider, LLMResponse, ToolCall, ProviderType
+from .base import LLMProvider, LLMResponse, ProviderType, ToolCall
 
 
 class AnthropicProvider(LLMProvider):
@@ -60,7 +61,7 @@ class AnthropicProvider(LLMProvider):
         self._max_tokens = max_tokens
 
         if not self._api_key:
-            from ..errors import RouraError, ErrorCode
+            from ..errors import ErrorCode, RouraError
             raise RouraError(
                 ErrorCode.API_KEY_NOT_SET,
                 message="Anthropic API key not configured",
@@ -240,7 +241,8 @@ class AnthropicProvider(LLMProvider):
     ) -> LLMResponse:
         """Non-streaming chat completion."""
         import httpx
-        from ..errors import RouraError, ErrorCode
+
+        from ..errors import ErrorCode, RouraError
 
         system_prompt, converted_messages = self._convert_messages(messages)
 
@@ -474,7 +476,8 @@ class AnthropicProvider(LLMProvider):
             LLMResponse with the model's response
         """
         import httpx
-        from ..errors import RouraError, ErrorCode
+
+        from ..errors import ErrorCode, RouraError
 
         if not self.supports_vision():
             return LLMResponse(error=f"Model {self._model} does not support vision")
@@ -519,7 +522,7 @@ class AnthropicProvider(LLMProvider):
 
         except RouraError:
             raise
-        except httpx.TimeoutException as e:
+        except httpx.TimeoutException:
             return LLMResponse(error="Vision request timed out")
         except httpx.HTTPError as e:
             return LLMResponse(error=f"Anthropic API error: {str(e)}")
