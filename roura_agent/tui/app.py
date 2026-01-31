@@ -7,11 +7,14 @@ Features:
 - Per-hunk diff approval
 - Keyboard shortcuts
 - File tree sidebar
+- /review command for code review
 
 © Roura.io
 """
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from typing import Optional
 
 try:
@@ -390,10 +393,161 @@ class RouraApp(App):
         status_bar = self.query_one("#status-bar", StatusBar)
         status_bar.set_status("Processing...")
 
-        # TODO: Send to agent and stream response
-        # For now, just echo
-        chat.add_message("assistant", f"Echo: {message}")
+        # Handle slash commands
+        if message.startswith("/"):
+            await self._handle_command(message)
+        else:
+            # TODO: Send to agent and stream response
+            # For now, just echo
+            chat.add_message("assistant", f"Echo: {message}")
+
         status_bar.set_status("Ready")
+
+    async def _handle_command(self, message: str) -> None:
+        """Handle slash commands."""
+        parts = message.split(maxsplit=1)
+        command = parts[0].lower()
+        args = parts[1] if len(parts) > 1 else ""
+
+        chat = self.query_one("#chat", ChatPane)
+        output = self.query_one("#output", OutputPane)
+
+        if command == "/review":
+            await self._run_review(args)
+        elif command == "/help":
+            self._show_command_help()
+        elif command == "/clear":
+            self.action_clear()
+            chat.add_message("system", "Cleared all panes")
+        else:
+            chat.add_message("system", f"Unknown command: {command}")
+            chat.add_message("system", "Available: /review, /help, /clear")
+
+    async def _run_review(self, args: str) -> None:
+        """Run code review."""
+        import tempfile
+
+        chat = self.query_one("#chat", ChatPane)
+        output = self.query_one("#output", OutputPane)
+        status_bar = self.query_one("#status-bar", StatusBar)
+
+        # Parse arguments
+        target_path = Path.cwd()
+        files = []
+
+        if args:
+            # Check if it's a path or file list
+            parts = args.split()
+            for part in parts:
+                if "," in part:
+                    # Comma-separated file list
+                    files.extend(f.strip() for f in part.split(",") if f.strip())
+                elif Path(part).exists():
+                    target_path = Path(part).resolve()
+                else:
+                    files.append(part)
+
+        chat.add_message("system", f"Starting code review...")
+        output.add_output(f"📂 Target: {target_path}")
+        if files:
+            output.add_output(f"📄 Files: {', '.join(files)}")
+
+        status_bar.set_status("Reviewing code...")
+
+        try:
+            from ..pro.ci import CIConfig, CIMode, CIRunner, CIExitCode
+            from ..pro.billing import BillingManager, BillingPlan
+
+            # Run review in background to not block UI
+            result = await asyncio.to_thread(
+                self._execute_review, target_path, files
+            )
+
+            # Display results
+            output.add_output("")
+            output.add_output("═" * 40)
+            output.add_output("CODE REVIEW RESULTS")
+            output.add_output("═" * 40)
+            output.add_output(result.summary)
+            output.add_output("")
+
+            if result.issues:
+                for issue in result.issues:
+                    severity_icon = {
+                        "error": "🔴",
+                        "warning": "🟡",
+                        "info": "🔵",
+                    }.get(issue.severity, "○")
+
+                    line_str = f":{issue.line}" if issue.line else ""
+                    output.add_output(f"{severity_icon} {issue.file}{line_str}")
+                    output.add_output(f"   {issue.message}")
+                    if issue.suggestion:
+                        output.add_output(f"   → {issue.suggestion}")
+                    output.add_output("")
+
+                error_count = sum(1 for i in result.issues if i.severity == "error")
+                warning_count = sum(1 for i in result.issues if i.severity == "warning")
+                info_count = sum(1 for i in result.issues if i.severity == "info")
+
+                chat.add_message(
+                    "assistant",
+                    f"Review complete: {error_count} errors, {warning_count} warnings, {info_count} suggestions"
+                )
+            else:
+                output.add_output("✅ No issues found!")
+                chat.add_message("assistant", "Review complete: No issues found!")
+
+        except Exception as e:
+            chat.add_message("system", f"Review failed: {str(e)}")
+            output.add_output(f"❌ Error: {str(e)}")
+
+        status_bar.set_status("Ready")
+
+    def _execute_review(self, target_path: Path, files: list[str]):
+        """Execute the review synchronously (called in thread)."""
+        import tempfile
+        from ..pro.ci import CIConfig, CIMode, CIRunner
+        from ..pro.billing import BillingManager, BillingPlan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            billing = BillingManager(storage_path=Path(tmp) / "billing.json")
+            billing.set_plan(BillingPlan.PRO)
+
+            config = CIConfig(
+                mode=CIMode.REVIEW,
+                target_path=str(target_path),
+                max_files=50,
+            )
+
+            runner = CIRunner(config, billing_manager=billing)
+
+            if files:
+                runner._selected_files = [target_path / f for f in files]
+
+            return runner.run()
+
+    def _show_command_help(self) -> None:
+        """Show available commands."""
+        output = self.query_one("#output", OutputPane)
+        output.add_output("")
+        output.add_output("═" * 40)
+        output.add_output("AVAILABLE COMMANDS")
+        output.add_output("═" * 40)
+        output.add_output("")
+        output.add_output("/review [path] [files]")
+        output.add_output("   Review code for issues")
+        output.add_output("   Examples:")
+        output.add_output("     /review")
+        output.add_output("     /review ./src")
+        output.add_output("     /review App.swift,Utils.swift")
+        output.add_output("")
+        output.add_output("/clear")
+        output.add_output("   Clear all panes")
+        output.add_output("")
+        output.add_output("/help")
+        output.add_output("   Show this help")
+        output.add_output("")
 
     def action_cancel(self) -> None:
         """Handle cancel action."""
