@@ -351,24 +351,44 @@ class TestGetProvider:
         """Test getting provider with explicit type."""
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
-        provider = get_provider(ProviderType.OPENAI)
+        # Skip license check for testing
+        provider = get_provider(ProviderType.OPENAI, check_license=False)
         assert provider.provider_type == ProviderType.OPENAI
 
     def test_get_provider_auto_detects_openai(self, monkeypatch):
-        """Test auto-detection prefers OpenAI when key is set."""
+        """Test auto-detection uses OpenAI when key is set and Ollama unavailable."""
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OLLAMA_MODEL", raising=False)
 
-        provider = get_provider()
-        assert provider.provider_type == ProviderType.OPENAI
+        # Mock Ollama as unavailable so cloud provider is used
+        # Keep the original is_available for other providers
+        original_is_available = provider_registry.is_available
+        def mock_is_available(pt):
+            if pt == ProviderType.OLLAMA:
+                return False
+            return original_is_available(pt)
+
+        with patch.object(provider_registry, 'is_available', side_effect=mock_is_available):
+            provider = get_provider(check_license=False)
+            assert provider.provider_type == ProviderType.OPENAI
 
     def test_get_provider_auto_detects_anthropic(self, monkeypatch):
-        """Test auto-detection uses Anthropic when only that key is set."""
+        """Test auto-detection uses Anthropic when only that key is set and Ollama unavailable."""
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.delenv("OLLAMA_MODEL", raising=False)
 
-        provider = get_provider()
-        assert provider.provider_type == ProviderType.ANTHROPIC
+        # Mock Ollama as unavailable so cloud provider is used
+        original_is_available = provider_registry.is_available
+        def mock_is_available(pt):
+            if pt == ProviderType.OLLAMA:
+                return False
+            return original_is_available(pt)
+
+        with patch.object(provider_registry, 'is_available', side_effect=mock_is_available):
+            provider = get_provider(check_license=False)
+            assert provider.provider_type == ProviderType.ANTHROPIC
 
     def test_get_provider_falls_back_to_ollama(self, monkeypatch):
         """Test auto-detection falls back to Ollama."""
@@ -376,7 +396,7 @@ class TestGetProvider:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.setenv("OLLAMA_MODEL", "llama3.1:8b")
 
-        provider = get_provider()
+        provider = get_provider(check_license=False)
         assert provider.provider_type == ProviderType.OLLAMA
 
 
