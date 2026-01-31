@@ -206,66 +206,71 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
 
     def _classify_intent(self, message: str) -> tuple[bool, str]:
         """
-        Ask the LLM to classify if a message needs tools or is just conversation.
+        Two-phase intent classification:
+        1. First, classify ONLY (TOOLS or CHAT)
+        2. If CHAT, get conversational response
 
         Returns:
             (needs_tools, response) - If needs_tools is False, response contains the conversational reply.
         """
-        classification_prompt = f"""You are Roura Agent, a friendly AI coding assistant. The user said:
+        # Phase 1: Classification ONLY
+        classification_prompt = f"""Classify this user message. Reply with ONLY one word: TOOLS or CHAT
 
-"{message}"
+TOOLS - ONLY if user explicitly:
+- Names a SPECIFIC FILE (e.g., "FeedCell.swift", "main.py")
+- Says "read", "edit", "modify", "add to", "fix" + specific location
+- Requests git/command operations (commit, push, run)
 
-RESPOND WITH [NEEDS_TOOLS] if the user:
-- Mentions a SPECIFIC FILE (e.g., "FeedCell.swift", "main.py", "HomeView.swift")
-- Asks you to ADD, MODIFY, CHANGE, UPDATE, FIX, or EDIT code
-- Wants you to READ or LOOK AT their actual code
-- Asks you to run commands, create commits, make tickets, search files
-- Describes a specific code change they want (even if phrased as a question)
+CHAT - for everything else including:
+- Greetings, casual conversation
+- General questions ("how is my code", "what do you think")
+- Brainstorming, opinions, advice
+- Questions that don't name specific files
 
-RESPOND CONVERSATIONALLY (no [NEEDS_TOOLS]) if:
-- Just chatting, greetings, or general questions
-- Asking for opinions WITHOUT mentioning specific files
-- Brainstorming ideas abstractly
-- Asking "how is my code" generally (suggest /review)
+When in doubt, choose CHAT. Only choose TOOLS when clearly necessary.
 
-Examples that NEED tools:
-- "In FeedCell.swift add a gradient" → [NEEDS_TOOLS]
-- "Can you add X to the overlayCard" → [NEEDS_TOOLS]
-- "Look at HomeView.swift and fix the bug" → [NEEDS_TOOLS]
-- "Read main.py" → [NEEDS_TOOLS]
-- "Create a github release" → [NEEDS_TOOLS]
+Examples:
+- "hi there" → CHAT
+- "how is my code looking?" → CHAT (general, no specific file)
+- "what do you think about X?" → CHAT
+- "In FeedCell.swift add a gradient" → TOOLS (specific file + action)
+- "read main.py" → TOOLS (specific file)
+- "create a commit" → TOOLS (git action)
 
-Examples that are just conversation:
-- "What do you think about using gradients?" → give opinion
-- "Help me brainstorm a new feature" → respond with ideas
-- "How is my code looking?" → suggest /review
-- "Hi there" → greet
+User message: "{message}"
 
-Now respond:"""
+One word only:"""
 
         try:
             llm = self._get_llm()
-            messages = [{"role": "user", "content": classification_prompt}]
 
-            # Quick call without tools
-            response = llm.chat(messages, tools=None)
+            # Phase 1: Get classification
+            response = llm.chat([{"role": "user", "content": classification_prompt}], tools=None)
 
             if response.error:
-                # On error, default to using tools
+                return True, ""  # Default to tools on error
+
+            classification = (response.content or "").strip().upper()
+
+            # Check classification
+            if "TOOLS" in classification:
                 return True, ""
 
-            content = response.content.strip() if response.content else ""
+            # Phase 2: Get conversational response
+            chat_prompt = f"""You are Roura Agent, a friendly AI coding assistant. Respond naturally to this message.
+If they ask about their code quality, mention they can run /review for deeper analysis.
 
-            # Check if LLM says it needs tools
-            if "[NEEDS_TOOLS]" in content:
-                return True, ""
+User: {message}"""
 
-            # Otherwise, return the conversational response
-            return False, content
+            chat_response = llm.chat([{"role": "user", "content": chat_prompt}], tools=None)
+
+            if chat_response.error:
+                return True, ""  # Fall back to tools
+
+            return False, chat_response.content.strip() if chat_response.content else ""
 
         except Exception:
-            # On any error, default to using tools
-            return True, ""
+            return True, ""  # Default to tools on error
 
     def _execute_tool(self, tool_call: ToolCall) -> ToolResult:
         """Execute a single tool with constraint checking and undo tracking."""
