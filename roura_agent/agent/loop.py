@@ -1005,6 +1005,12 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
                         self._show_walkthrough()
                         continue
 
+                    if user_input.lower().startswith("/review"):
+                        parts = user_input.split(maxsplit=1)
+                        args = parts[1] if len(parts) > 1 else ""
+                        self._run_review(args)
+                        continue
+
                     # Process request through agentic loop
                     self.process(user_input)
 
@@ -1025,6 +1031,7 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
         self.console.print(Panel(
             f"[{Styles.HEADER}]Commands:[/{Styles.HEADER}]\n"
             f"  [{Colors.PRIMARY}]/help[/{Colors.PRIMARY}]        - Show this help\n"
+            f"  [{Colors.PRIMARY}]/review[/{Colors.PRIMARY}]      - AI code review\n"
             f"  [{Colors.PRIMARY}]/status[/{Colors.PRIMARY}]      - Show session info\n"
             f"  [{Colors.PRIMARY}]/model[/{Colors.PRIMARY}]       - Switch LLM provider\n"
             f"  [{Colors.PRIMARY}]/upgrade[/{Colors.PRIMARY}]     - Check for & install updates\n"
@@ -1445,6 +1452,115 @@ roura-agent setup    # Reconfigure settings
             save_last_provider(provider_type.value)
         except Exception as e:
             self.console.print(f"[{Colors.ERROR}]Failed to switch: {e}[/{Colors.ERROR}]")
+
+    def _run_review(self, args: str = "") -> None:
+        """Run code review on the current project or specified files."""
+        import tempfile
+        from pathlib import Path as P
+        from rich.progress import Progress, SpinnerColumn, TextColumn
+
+        from ..pro.ci import CIConfig, CIMode, CIRunner, CIExitCode
+        from ..pro.billing import BillingManager, BillingPlan
+
+        # Determine target path and files
+        target_path = P.cwd()
+        selected_files = None
+
+        if args:
+            parts = args.split()
+            for part in parts:
+                if "," in part:
+                    # Comma-separated file list
+                    selected_files = [f.strip() for f in part.split(",") if f.strip()]
+                elif P(part).exists():
+                    if P(part).is_dir():
+                        target_path = P(part).resolve()
+                    else:
+                        # Single file
+                        selected_files = [part]
+                else:
+                    # Assume it's a file that should exist
+                    if not selected_files:
+                        selected_files = []
+                    selected_files.append(part)
+
+        self.console.print(f"\n[{Colors.PRIMARY}]Starting code review...[/{Colors.PRIMARY}]")
+        self.console.print(f"[{Colors.DIM}]Target: {target_path}[/{Colors.DIM}]")
+        if selected_files:
+            self.console.print(f"[{Colors.DIM}]Files: {', '.join(selected_files)}[/{Colors.DIM}]")
+        self.console.print()
+
+        try:
+            # Create temp billing manager to bypass limits
+            with tempfile.TemporaryDirectory() as tmp:
+                billing = BillingManager(storage_path=P(tmp) / "billing.json")
+                billing.set_plan(BillingPlan.PRO)
+
+                config = CIConfig(
+                    mode=CIMode.REVIEW,
+                    target_path=str(target_path),
+                    max_files=50,
+                )
+
+                runner = CIRunner(config, billing_manager=billing)
+
+                if selected_files:
+                    runner._selected_files = [target_path / f for f in selected_files]
+
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    console=self.console,
+                ) as progress:
+                    task = progress.add_task("Analyzing code...", total=None)
+                    result = runner.run()
+                    progress.update(task, description="Review complete!")
+
+                # Display results
+                self.console.print()
+                self.console.print(f"[{Styles.HEADER}]Review Results[/{Styles.HEADER}]")
+                self.console.print(f"[{Colors.DIM}]{'─' * 50}[/{Colors.DIM}]")
+                self.console.print()
+                self.console.print(result.summary)
+                self.console.print()
+
+                if result.issues:
+                    for issue in result.issues:
+                        severity_colors = {
+                            "error": Colors.ERROR,
+                            "warning": Colors.WARNING,
+                            "info": Colors.INFO,
+                        }
+                        severity_icons = {
+                            "error": "🔴",
+                            "warning": "🟡",
+                            "info": "🔵",
+                        }
+                        color = severity_colors.get(issue.severity, Colors.DIM)
+                        icon = severity_icons.get(issue.severity, "○")
+
+                        line_str = f":{issue.line}" if issue.line else ""
+                        self.console.print(f"{icon} [{color}]{issue.file}{line_str}[/{color}]")
+                        self.console.print(f"   {issue.message}")
+                        if issue.suggestion:
+                            self.console.print(f"   [{Colors.DIM}]→ {issue.suggestion}[/{Colors.DIM}]")
+                        self.console.print()
+
+                    error_count = sum(1 for i in result.issues if i.severity == "error")
+                    warning_count = sum(1 for i in result.issues if i.severity == "warning")
+                    info_count = sum(1 for i in result.issues if i.severity == "info")
+
+                    self.console.print(f"[{Colors.DIM}]{'─' * 50}[/{Colors.DIM}]")
+                    self.console.print(
+                        f"[{Colors.ERROR}]{error_count} errors[/{Colors.ERROR}]  "
+                        f"[{Colors.WARNING}]{warning_count} warnings[/{Colors.WARNING}]  "
+                        f"[{Colors.INFO}]{info_count} suggestions[/{Colors.INFO}]"
+                    )
+                else:
+                    self.console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS} No issues found![/{Colors.SUCCESS}]")
+
+        except Exception as e:
+            self.console.print(f"[{Colors.ERROR}]Review failed: {e}[/{Colors.ERROR}]")
 
     def _should_offer_escalation(self) -> bool:
         """Check if we should offer to escalate to a more powerful model.
