@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write  # Required for trusted publishing
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -28,5 +29,10 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        # Uses trusted publishing - no API token needed
-        # Configure at: https://pypi.org/manage/project/roura-agent/settings/publishing/
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          # If PYPI_API_TOKEN secret is set, uses token auth
+          # If not set, falls back to trusted publishing
+          # For trusted publishing, configure at:
+          # https://pypi.org/manage/project/roura-agent/settings/publishing/
+          # Owner: RouraIO, Repo: roura-agent, Workflow: publish.yml
