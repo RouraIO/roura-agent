@@ -203,73 +203,61 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
         """Get JSON Schema for all registered tools."""
         return registry_to_json_schema(registry)
 
-    def _needs_tools(self, message: str) -> bool:
+    def _classify_intent(self, message: str) -> tuple[bool, str]:
         """
-        Determine if a message likely needs tool access.
+        Ask the LLM to classify if a message needs tools or is just conversation.
 
-        Simple conversational messages don't need tools and sending them
-        slows down the model significantly. Task-oriented messages need tools.
+        Returns:
+            (needs_tools, response) - If needs_tools is False, response contains the conversational reply.
         """
-        import re
+        classification_prompt = f"""You are classifying user intent. The user said:
 
-        message_lower = message.lower().strip()
+"{message}"
 
-        # Short greetings and simple questions - no tools needed
-        conversational_patterns = [
-            r'^(hi|hello|hey|yo|sup|hiya|howdy|greetings)[\s!.,?]*$',
-            r'^(how are you|what\'s up|whats up|how\'s it going)[\s!?]*$',
-            r'^(thanks|thank you|thx|ty)[\s!.]*$',
-            r'^(bye|goodbye|see you|later|cya)[\s!.]*$',
-            r'^(yes|no|yeah|yep|nope|ok|okay|sure|cool|nice|great|awesome)[\s!.]*$',
-            r'^(tell me about yourself|what can you do|help me)[\s!?]*$',
-            r'^(good morning|good night|good evening|good afternoon)[\s!.]*$',
-        ]
+If this requires ACTIONS like reading files, writing code, running commands, creating tickets,
+making commits, searching the codebase, or any task that needs external tools - respond with exactly:
+[NEEDS_TOOLS]
 
-        for pattern in conversational_patterns:
-            if re.match(pattern, message_lower, re.IGNORECASE):
-                return False
+If this is just conversation, brainstorming, asking for opinions, asking questions, or chatting -
+just respond naturally to the user. Do NOT say [NEEDS_TOOLS].
 
-        # Opinion/thought questions about code are conversational (no tools needed)
-        opinion_patterns = [
-            r'^what.*(think|opinion|thought|feel).*\?*$',
-            r'^(do you|can you|could you|would you).*(think|like|prefer|recommend).*\?*$',
-            r'^how do you (feel|think).*\?*$',
-            r'^what\'?s your (opinion|thought|take|view).*\?*$',
-            r'^(is this|is it|are these|is my|is the).*(good|bad|ok|fine|correct|right|wrong).*\?*$',
-        ]
+Examples that NEED tools:
+- "review my codebase" → [NEEDS_TOOLS]
+- "create a github release" → [NEEDS_TOOLS]
+- "read the main.py file" → [NEEDS_TOOLS]
+- "make a jira ticket" → [NEEDS_TOOLS]
 
-        for pattern in opinion_patterns:
-            if re.match(pattern, message_lower, re.IGNORECASE):
-                return False
+Examples that are just conversation:
+- "help me think of a new feature" → respond with ideas
+- "what do you think of my code style?" → respond with opinion
+- "how's the weather?" → respond conversationally
+- "hi there" → respond with greeting
 
-        # Action verbs that clearly indicate a task
-        action_patterns = [
-            r'\b(read|write|edit|create|delete|remove|modify|change|update)\b.*\b(file|code|function|class)\b',
-            r'\b(fix|debug|solve)\b.*\b(bug|error|issue|problem)\b',
-            r'\b(git|commit|push|pull|merge|branch|checkout)\b',
-            r'\b(run|execute|build|compile|deploy|test)\b',
-            r'\b(search|find|grep|look for|locate)\b.*\b(in|for|file)\b',
-            r'\b(refactor|rename|move|copy)\b',
-            r'\b(install|upgrade)\b.*\b(package|dependency|module)\b',
-            r'\b(analyze|review|check|lint|format)\b.*\b(code|file|project)\b',
-            r'\b(show|list|display)\b.*\b(file|directory|folder)\b',
-            r'\b(add|implement|create)\b.*\b(feature|function|method|test)\b',
-        ]
+Now respond to the user:"""
 
-        for pattern in action_patterns:
-            if re.search(pattern, message_lower, re.IGNORECASE):
-                return True
+        try:
+            llm = self._get_llm()
+            messages = [{"role": "user", "content": classification_prompt}]
 
-        # Explicit file references
-        if re.search(r'\b[\w/\\.-]+\.(py|js|ts|tsx|jsx|go|rs|java|swift|kt|c|cpp|h|rb|php|json|yaml|yml|md|txt)\b', message_lower):
-            return True
+            # Quick call without tools
+            response = llm.chat(messages, tools=None)
 
-        # If message is short and no action patterns matched, probably conversational
-        if len(message) < 50:
-            return False
+            if response.error:
+                # On error, default to using tools
+                return True, ""
 
-        # Default: include tools for longer messages (might be complex tasks)
-        return True
+            content = response.content.strip() if response.content else ""
+
+            # Check if LLM says it needs tools
+            if "[NEEDS_TOOLS]" in content:
+                return True, ""
+
+            # Otherwise, return the conversational response
+            return False, content
+
+        except Exception:
+            # On any error, default to using tools
+            return True, ""
 
     def _execute_tool(self, tool_call: ToolCall) -> ToolResult:
         """Execute a single tool with constraint checking and undo tracking."""
@@ -693,16 +681,29 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
         # Get LLM response
         self.state = AgentState.THINKING
 
-        # Determine if we need tools for this message
-        # Skip tools for simple conversational messages to avoid timeout
+        # First, ask LLM to classify: conversation or task?
         last_user_msg = ""
         for msg in reversed(self.context.messages):
             if msg.role == "user":
-                last_user_msg = msg.content.lower().strip()
+                last_user_msg = msg.content.strip()
                 break
 
-        needs_tools = self._needs_tools(last_user_msg)
-        tools_schema = self._get_tools_schema() if needs_tools else []
+        needs_tools, conv_response = self._classify_intent(last_user_msg)
+
+        if not needs_tools and conv_response:
+            # Pure conversation - display response and we're done
+            self.console.print()
+            try:
+                self.console.print(Markdown(conv_response))
+            except Exception:
+                self.console.print(conv_response)
+
+            # Add to context
+            self.context.add_message(role="assistant", content=conv_response)
+            return False
+
+        # Task that needs tools - proceed with full tool schema
+        tools_schema = self._get_tools_schema()
         response = self._stream_response(tools_schema)
 
         if response.interrupted:
