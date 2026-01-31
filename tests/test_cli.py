@@ -26,22 +26,18 @@ class TestCLIBasics:
 
     def test_help_flag(self):
         """Test --help flag shows help."""
-        # Use a wider terminal width to prevent text wrapping issues
-        import os
-        old_columns = os.environ.get("COLUMNS")
-        os.environ["COLUMNS"] = "200"
-        try:
-            result = runner.invoke(app, ["--help"])
-            assert result.exit_code == 0
-            assert "Roura Agent" in result.stdout
-            # Check for provider option - may be displayed as "-p" or "--provider"
-            assert "-p" in result.stdout or "--provider" in result.stdout or "provider" in result.stdout.lower()
-            assert "--safe-mode" in result.stdout or "safe-mode" in result.stdout.lower()
-        finally:
-            if old_columns:
-                os.environ["COLUMNS"] = old_columns
-            else:
-                os.environ.pop("COLUMNS", None)
+        import re
+        # Strip ANSI escape codes for reliable text checking
+        def strip_ansi(text):
+            return re.sub(r'\x1b\[[0-9;]*m', '', text)
+
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        stdout = strip_ansi(result.stdout)
+        assert "Roura Agent" in stdout
+        # Check for provider option - may be displayed as "-p" or "--provider"
+        assert "-p" in stdout or "--provider" in stdout or "provider" in stdout.lower()
+        assert "--safe-mode" in stdout or "safe-mode" in stdout.lower()
 
     def test_doctor_command(self):
         """Test doctor command runs."""
