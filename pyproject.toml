@@ -35,6 +35,17 @@ dev = [
   "ruff>=0.4.0",
   "pyright>=1.1.350",
 ]
+tui = [
+  "textual>=0.50.0",
+]
+server = [
+  "fastapi>=0.109.0",
+  "uvicorn>=0.27.0",
+  "python-multipart>=0.0.6",
+]
+crypto = [
+  "cryptography>=42.0.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/roura-io/roura-agent"

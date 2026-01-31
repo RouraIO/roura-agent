@@ -7,7 +7,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 DIST_DIR="$PROJECT_ROOT/dist"
-VERSION="${VERSION:-1.7.0}"
+
+# Get version from constants.py if not set
+if [[ -z "${VERSION:-}" ]]; then
+    VERSION=$(python3 -c "import sys; sys.path.insert(0, '$PROJECT_ROOT'); from roura_agent.constants import VERSION; print(VERSION)" 2>/dev/null || echo "0.0.0")
+fi
 
 APP_NAME="Roura Agent"
 APP_PATH="$DIST_DIR/$APP_NAME.app"

@@ -100,8 +100,15 @@ jobs:
 
       - name: Update Homebrew formula
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
           TARBALL_SHA256="${{ steps.checksums.outputs.tarball_sha256 }}"
-          sed -i '' "s/PLACEHOLDER_SHA256_WILL_BE_REPLACED_BY_CI/$TARBALL_SHA256/" homebrew/roura-agent.rb
+
+          # Replace all placeholders in formula
+          sed -i '' "s/RELEASE_VERSION/$VERSION/g" homebrew/roura-agent.rb
+          sed -i '' "s/TARBALL_SHA256/$TARBALL_SHA256/" homebrew/roura-agent.rb
+          # SOURCE_SHA256 is left as placeholder - Intel build from source uses git archive
+
+          echo "Updated Homebrew formula:"
           cat homebrew/roura-agent.rb
 
       - name: Upload DMG artifact

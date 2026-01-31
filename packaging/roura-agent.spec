@@ -16,6 +16,14 @@ block_cipher = None
 # Project root
 ROOT = Path(SPECPATH).parent
 
+# Get version from constants.py
+import importlib.util
+constants_path = ROOT / 'roura_agent' / 'constants.py'
+spec = importlib.util.spec_from_file_location('constants', constants_path)
+constants = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(constants)
+VERSION = constants.VERSION
+
 a = Analysis(
     [str(ROOT / 'packaging' / 'main.py')],
     pathex=[str(ROOT)],
@@ -116,8 +124,8 @@ app = BUNDLE(
         'CFBundleName': 'Roura Agent',
         'CFBundleDisplayName': 'Roura Agent',
         'CFBundleIdentifier': 'io.roura.agent',
-        'CFBundleVersion': '1.7.0',
-        'CFBundleShortVersionString': '1.7.0',
+        'CFBundleVersion': VERSION,
+        'CFBundleShortVersionString': VERSION,
         'CFBundleExecutable': 'roura-agent',
         'CFBundlePackageType': 'APPL',
         'LSMinimumSystemVersion': '15.0',
