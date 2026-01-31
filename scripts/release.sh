@@ -139,7 +139,15 @@ echo -e "${GREEN}   ✓ roura_agent/constants.py${NC}"
 # Step 3: Run tests
 echo "3. Running tests..."
 if ! $DRY_RUN; then
-    if ! pytest tests/ -q --tb=no > /dev/null 2>&1; then
+    # Try python -m pytest first (more reliable), fall back to pytest
+    if command -v python > /dev/null; then
+        PYTEST_CMD="python -m pytest"
+    elif command -v python3 > /dev/null; then
+        PYTEST_CMD="python3 -m pytest"
+    else
+        PYTEST_CMD="pytest"
+    fi
+    if ! $PYTEST_CMD tests/ -q --tb=no > /dev/null 2>&1; then
         echo -e "${RED}   ✗ Tests failed! Aborting release.${NC}"
         git checkout -- pyproject.toml roura_agent/constants.py
         exit 1
