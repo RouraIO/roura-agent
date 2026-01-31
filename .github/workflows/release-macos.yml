@@ -1,0 +1,167 @@
+name: Build macOS Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 1.7.0)'
+        required: true
+        default: '1.7.0'
+
+env:
+  VERSION: ${{ github.event.inputs.version || github.ref_name }}
+
+jobs:
+  build-macos:
+    runs-on: macos-14  # Apple Silicon runner
+    permissions:
+      contents: write  # For creating releases
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Extract version
+        id: version
+        run: |
+          # Remove 'v' prefix if present
+          VERSION="${{ env.VERSION }}"
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Build macOS app
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/build-macos.sh
+
+      - name: Create DMG
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Install create-dmg for prettier DMG
+          brew install create-dmg || true
+          ./scripts/create-dmg.sh
+
+      - name: Create tarball
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ./scripts/package-tarball.sh
+
+      - name: Scan for secrets
+        run: |
+          ./scripts/scan-secrets.sh
+
+      - name: Run smoke tests
+        run: |
+          echo "Testing CLI from app bundle..."
+          "./dist/Roura Agent.app/Contents/MacOS/roura-agent" --version
+          "./dist/Roura Agent.app/Contents/MacOS/roura-agent" doctor --json || true
+
+      - name: Sign and notarize (if credentials available)
+        if: env.CODESIGN_IDENTITY != ''
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ./scripts/sign-and-notarize.sh
+
+      - name: Calculate checksums
+        id: checksums
+        run: |
+          cd dist
+          DMG_SHA256=$(shasum -a 256 Roura-Agent-*.dmg | cut -d' ' -f1)
+          TARBALL_SHA256=$(shasum -a 256 roura-agent_*.tar.gz | cut -d' ' -f1)
+          echo "dmg_sha256=$DMG_SHA256" >> $GITHUB_OUTPUT
+          echo "tarball_sha256=$TARBALL_SHA256" >> $GITHUB_OUTPUT
+          echo "DMG SHA256: $DMG_SHA256"
+          echo "Tarball SHA256: $TARBALL_SHA256"
+
+      - name: Update Homebrew formula
+        run: |
+          TARBALL_SHA256="${{ steps.checksums.outputs.tarball_sha256 }}"
+          sed -i '' "s/PLACEHOLDER_SHA256_WILL_BE_REPLACED_BY_CI/$TARBALL_SHA256/" homebrew/roura-agent.rb
+          cat homebrew/roura-agent.rb
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: dist/Roura-Agent-*.dmg
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-tarball
+          path: dist/roura-agent_*.tar.gz
+
+      - name: Upload Homebrew formula
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-formula
+          path: homebrew/roura-agent.rb
+
+      - name: Create/Update GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            dist/Roura-Agent-*.dmg
+            dist/roura-agent_*.tar.gz
+            homebrew/roura-agent.rb
+          body: |
+            ## Installation
+
+            ### macOS (Apple Silicon)
+
+            **Option 1: DMG Installer**
+            1. Download `Roura-Agent-${{ steps.version.outputs.version }}.dmg`
+            2. Open the DMG and drag Roura Agent to Applications
+            3. Open Terminal and run: `"/Applications/Roura Agent.app/Contents/MacOS/roura-agent"`
+
+            **Option 2: Homebrew**
+            ```bash
+            brew tap rouraio/tap
+            brew install roura-agent
+            ```
+
+            **Option 3: pipx (requires Python)**
+            ```bash
+            pipx install roura-agent
+            ```
+
+            ## Checksums
+
+            | File | SHA256 |
+            |------|--------|
+            | DMG | `${{ steps.checksums.outputs.dmg_sha256 }}` |
+            | Tarball | `${{ steps.checksums.outputs.tarball_sha256 }}` |
+
+            ## Notes
+
+            ${{ env.CODESIGN_IDENTITY && '✅ This release is signed and notarized.' || '⚠️ This release is unsigned. You may need to right-click → Open the first time.' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
