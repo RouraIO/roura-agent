@@ -702,16 +702,19 @@ Now respond to the user:"""
         ):
             needs_tools, conv_response = self._classify_intent(last_user_msg)
 
-        if not needs_tools and conv_response:
-            # Pure conversation - display response and we're done
-            self.console.print()
-            try:
-                self.console.print(Markdown(conv_response))
-            except Exception:
-                self.console.print(conv_response)
-
-            # Add to context
-            self.context.add_message(role="assistant", content=conv_response)
+        if not needs_tools:
+            # Conversational response
+            if conv_response:
+                self.console.print()
+                try:
+                    self.console.print(Markdown(conv_response))
+                except Exception:
+                    self.console.print(conv_response)
+                self.context.add_message(role="assistant", content=conv_response)
+            else:
+                # Empty conversational response - show feedback
+                self.console.print()
+                self.console.print(f"[{Colors.DIM}]No response. Try rephrasing or use /clear to start fresh.[/{Colors.DIM}]")
             return False
 
         # Task that needs tools - show agent name with spinner
@@ -1002,6 +1005,9 @@ Now respond to the user:"""
         try:
             while not is_shutdown_requested():
                 try:
+                    # Clear any lingering interrupt flag from previous operation
+                    clear_interrupt()
+
                     # Prompt with tab completion
                     user_input = prompt_input("> ").strip()
 
