@@ -154,11 +154,19 @@ class OllamaProvider(LLMProvider):
             tool_calls_buffer: dict[int, dict] = {}
 
             try:
+                # Use separate timeouts: shorter connect, longer read
+                # This allows ESC to work better during initial connection
+                timeout = httpx.Timeout(
+                    connect=10.0,  # 10s to connect
+                    read=self._timeout,  # Full timeout for reading
+                    write=30.0,
+                    pool=10.0,
+                )
                 with httpx.stream(
                     "POST",
                     f"{self._base_url}/api/chat",
                     json=payload,
-                    timeout=self._timeout,
+                    timeout=timeout,
                 ) as response:
                     response.raise_for_status()
 

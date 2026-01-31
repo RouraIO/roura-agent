@@ -80,6 +80,7 @@ class AgentConfig:
     escalation_min_failures: int = 3  # Only escalate after 3 consecutive failures
     escalation_prompt_user: bool = True  # Always ask before escalating
     escalation_auto: bool = False  # Never auto-escalate without user consent
+    debug: bool = False  # Enable debug output
 
 
 class AgentLoop:
@@ -100,26 +101,28 @@ class AgentLoop:
 
     BASE_SYSTEM_PROMPT = """You are Roura Agent, a friendly AI coding assistant running locally on the user's machine.
 
-PERSONALITY: Be conversational, helpful, and concise. Talk like a knowledgeable colleague, not a formal assistant. Use casual language. Never output JSON or structured data as your response - always respond in natural language.
+PERSONALITY:
+- Be warm, conversational, and human. Chat naturally like a friendly colleague.
+- ALWAYS respond to the user, even for simple greetings or questions. Say hi back, share opinions, have a conversation.
+- Use casual language. Be concise but not robotic.
+- If the user asks for your opinion, give one! Don't deflect.
 
-HOW YOU WORK:
-- Use tools silently to gather info, then respond naturally
-- Never show tool calls or JSON to the user - just describe what you found/did
-- When exploring code, summarize insights rather than dumping raw output
-- If something fails, adapt and try alternatives without complaining
+CONVERSATION vs TASKS:
+- For casual chat (greetings, questions, opinions): Just respond naturally. No tools needed.
+- For coding tasks: Use tools silently, then share results conversationally.
 
-CRITICAL RULES:
-1. NEVER output JSON as a response. If you need to call a tool, just call it.
-2. Discover files with fs.list before reading them - don't guess paths
-3. Read files before modifying them
-4. Keep responses brief and natural - no numbered lists unless asked
-5. Do the work, then share results conversationally
+HOW YOU WORK WITH CODE:
+- Use tools to gather info, then respond naturally
+- Never show JSON or raw tool output - describe what you found/did
+- Discover files with fs.list before reading - don't guess paths
+- Read files before modifying them
+- If something fails, adapt and try alternatives
 
 When reviewing a project:
-1. Use project.analyze for a quick overview of languages and structure
-2. Use project.summary to understand what the project does
-3. Read key files (README, main entry points, configs)
-4. Provide a helpful, conversational summary
+1. Use project.analyze for a quick overview
+2. Use project.summary to understand what it does
+3. Read key files (README, main entry points)
+4. Share a helpful, conversational summary
 
 Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.log, git.add, git.commit, shell.exec, project.analyze, project.summary, project.related"""
 
@@ -199,6 +202,74 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
     def _get_tools_schema(self) -> list[dict]:
         """Get JSON Schema for all registered tools."""
         return registry_to_json_schema(registry)
+
+    def _needs_tools(self, message: str) -> bool:
+        """
+        Determine if a message likely needs tool access.
+
+        Simple conversational messages don't need tools and sending them
+        slows down the model significantly. Task-oriented messages need tools.
+        """
+        import re
+
+        message_lower = message.lower().strip()
+
+        # Short greetings and simple questions - no tools needed
+        conversational_patterns = [
+            r'^(hi|hello|hey|yo|sup|hiya|howdy|greetings)[\s!.,?]*$',
+            r'^(how are you|what\'s up|whats up|how\'s it going)[\s!?]*$',
+            r'^(thanks|thank you|thx|ty)[\s!.]*$',
+            r'^(bye|goodbye|see you|later|cya)[\s!.]*$',
+            r'^(yes|no|yeah|yep|nope|ok|okay|sure|cool|nice|great|awesome)[\s!.]*$',
+            r'^(tell me about yourself|what can you do|help me)[\s!?]*$',
+            r'^(good morning|good night|good evening|good afternoon)[\s!.]*$',
+        ]
+
+        for pattern in conversational_patterns:
+            if re.match(pattern, message_lower, re.IGNORECASE):
+                return False
+
+        # Opinion/thought questions about code are conversational (no tools needed)
+        opinion_patterns = [
+            r'^what.*(think|opinion|thought|feel).*\?*$',
+            r'^(do you|can you|could you|would you).*(think|like|prefer|recommend).*\?*$',
+            r'^how do you (feel|think).*\?*$',
+            r'^what\'?s your (opinion|thought|take|view).*\?*$',
+            r'^(is this|is it|are these|is my|is the).*(good|bad|ok|fine|correct|right|wrong).*\?*$',
+        ]
+
+        for pattern in opinion_patterns:
+            if re.match(pattern, message_lower, re.IGNORECASE):
+                return False
+
+        # Action verbs that clearly indicate a task
+        action_patterns = [
+            r'\b(read|write|edit|create|delete|remove|modify|change|update)\b.*\b(file|code|function|class)\b',
+            r'\b(fix|debug|solve)\b.*\b(bug|error|issue|problem)\b',
+            r'\b(git|commit|push|pull|merge|branch|checkout)\b',
+            r'\b(run|execute|build|compile|deploy|test)\b',
+            r'\b(search|find|grep|look for|locate)\b.*\b(in|for|file)\b',
+            r'\b(refactor|rename|move|copy)\b',
+            r'\b(install|upgrade)\b.*\b(package|dependency|module)\b',
+            r'\b(analyze|review|check|lint|format)\b.*\b(code|file|project)\b',
+            r'\b(show|list|display)\b.*\b(file|directory|folder)\b',
+            r'\b(add|implement|create)\b.*\b(feature|function|method|test)\b',
+        ]
+
+        for pattern in action_patterns:
+            if re.search(pattern, message_lower, re.IGNORECASE):
+                return True
+
+        # Explicit file references
+        if re.search(r'\b[\w/\\.-]+\.(py|js|ts|tsx|jsx|go|rs|java|swift|kt|c|cpp|h|rb|php|json|yaml|yml|md|txt)\b', message_lower):
+            return True
+
+        # If message is short and no action patterns matched, probably conversational
+        if len(message) < 50:
+            return False
+
+        # Default: include tools for longer messages (might be complex tasks)
+        return True
 
     def _execute_tool(self, tool_call: ToolCall) -> ToolResult:
         """Execute a single tool with constraint checking and undo tracking."""
@@ -469,6 +540,14 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
         llm = self._get_llm()
         messages = self.context.get_messages_for_llm()
 
+        # Debug: log what we're sending
+        if self.config.debug:
+            self.console.print(f"[dim]DEBUG: Sending {len(messages)} messages to {llm.model_name}[/dim]")
+            for m in messages[-3:]:  # Show last 3
+                role = m.get('role', '?')
+                content = (m.get('content', '') or '')[:50]
+                self.console.print(f"[dim]  {role}: {content}...[/dim]")
+
         content_buffer = ""
         final_response: Optional[LLMResponse] = None
         start_time = time.time()
@@ -613,7 +692,17 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
 
         # Get LLM response
         self.state = AgentState.THINKING
-        tools_schema = self._get_tools_schema()
+
+        # Determine if we need tools for this message
+        # Skip tools for simple conversational messages to avoid timeout
+        last_user_msg = ""
+        for msg in reversed(self.context.messages):
+            if msg.role == "user":
+                last_user_msg = msg.content.lower().strip()
+                break
+
+        needs_tools = self._needs_tools(last_user_msg)
+        tools_schema = self._get_tools_schema() if needs_tools else []
         response = self._stream_response(tools_schema)
 
         if response.interrupted:
@@ -652,6 +741,10 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
                     self.console.print(Markdown(response.content))
                 except Exception:
                     self.console.print(response.content)
+        elif not response.has_tool_calls:
+            # No content and no tool calls - model returned empty
+            self.console.print()
+            self.console.print(f"[{Colors.DIM}]Hmm, I didn't have a response for that. Try rephrasing or use /clear to start fresh.[/{Colors.DIM}]")
 
         # Add assistant message to context
         if response.has_content or response.has_tool_calls:
