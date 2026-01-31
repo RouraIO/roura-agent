@@ -520,6 +520,12 @@ def get_project_context_prompt(project: ProjectInfo) -> str:
     key_files = []
     if project.type == "swift":
         key_files = [f for f in project.files if f.endswith((".swift", ".xib", ".storyboard"))][:20]
+        # Add SwiftUI preference for iOS projects
+        lines.append("")
+        lines.append("### iOS Development Guidelines:")
+        lines.append("- **ALWAYS prefer SwiftUI** over UIKit unless absolutely necessary")
+        lines.append("- Use modern SwiftUI patterns (ViewModels, @Observable, etc.)")
+        lines.append("- Only use UIKit when SwiftUI lacks required functionality")
     elif project.type == "python":
         key_files = [f for f in project.files if f.endswith(".py")][:20]
     elif project.type == "node":
