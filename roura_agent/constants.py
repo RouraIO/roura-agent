@@ -198,8 +198,8 @@ class APIConstants:
 
 
 # Version info
-VERSION = "3.6.2"
-VERSION_TUPLE = (3, 6, 2)
+VERSION = "3.6.3"
+VERSION_TUPLE = (3, 6, 3)
 
 
 def get_version() -> str:

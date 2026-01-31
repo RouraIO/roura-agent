@@ -210,7 +210,7 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
         Returns:
             (needs_tools, response) - If needs_tools is False, response contains the conversational reply.
         """
-        classification_prompt = f"""You are classifying user intent. The user said:
+        classification_prompt = f"""You are Roura Agent, a friendly AI coding assistant. The user said:
 
 "{message}"
 
@@ -229,9 +229,12 @@ Examples that NEED tools:
 
 Examples that are just conversation:
 - "help me think of a new feature" → respond with ideas
-- "what do you think of my code style?" → respond with opinion
+- "what do you think of my code style?" → respond with opinion (mention /review for deeper analysis)
 - "how's the weather?" → respond conversationally
 - "hi there" → respond with greeting
+
+IMPORTANT: When the user asks about their code quality, structure, or opinions about their codebase,
+respond conversationally BUT mention that they can run `/review` for an in-depth automated code review.
 
 Now respond to the user:"""
 
@@ -688,7 +691,14 @@ Now respond to the user:"""
                 last_user_msg = msg.content.strip()
                 break
 
-        needs_tools, conv_response = self._classify_intent(last_user_msg)
+        # Show "Thinking..." spinner during classification (conversational mode)
+        with Live(
+            Spinner("dots", text=" Thinking...", style=Colors.PRIMARY),
+            console=self.console,
+            refresh_per_second=20,
+            transient=True,
+        ):
+            needs_tools, conv_response = self._classify_intent(last_user_msg)
 
         if not needs_tools and conv_response:
             # Pure conversation - display response and we're done
@@ -702,7 +712,8 @@ Now respond to the user:"""
             self.context.add_message(role="assistant", content=conv_response)
             return False
 
-        # Task that needs tools - proceed with full tool schema
+        # Task that needs tools - show agent name with spinner
+        # The _stream_response already shows "[Agent] thinking..." for tool mode
         tools_schema = self._get_tools_schema()
         response = self._stream_response(tools_schema)
 
