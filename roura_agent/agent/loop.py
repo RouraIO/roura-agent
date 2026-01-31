@@ -215,29 +215,33 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
 
 "{message}"
 
-If this requires ACTIONS like reading files, writing code, running commands, creating tickets,
-making commits, searching the codebase, or any task that needs external tools - respond with exactly:
-[NEEDS_TOOLS]
+RESPOND WITH [NEEDS_TOOLS] if the user:
+- Mentions a SPECIFIC FILE (e.g., "FeedCell.swift", "main.py", "HomeView.swift")
+- Asks you to ADD, MODIFY, CHANGE, UPDATE, FIX, or EDIT code
+- Wants you to READ or LOOK AT their actual code
+- Asks you to run commands, create commits, make tickets, search files
+- Describes a specific code change they want (even if phrased as a question)
 
-If this is just conversation, brainstorming, asking for opinions, asking questions, or chatting -
-just respond naturally to the user. Do NOT say [NEEDS_TOOLS].
+RESPOND CONVERSATIONALLY (no [NEEDS_TOOLS]) if:
+- Just chatting, greetings, or general questions
+- Asking for opinions WITHOUT mentioning specific files
+- Brainstorming ideas abstractly
+- Asking "how is my code" generally (suggest /review)
 
 Examples that NEED tools:
-- "review my codebase" → [NEEDS_TOOLS]
-- "create a github release" → [NEEDS_TOOLS]
-- "read the main.py file" → [NEEDS_TOOLS]
-- "make a jira ticket" → [NEEDS_TOOLS]
+- "In FeedCell.swift add a gradient" → [NEEDS_TOOLS]
+- "Can you add X to the overlayCard" → [NEEDS_TOOLS]
+- "Look at HomeView.swift and fix the bug" → [NEEDS_TOOLS]
+- "Read main.py" → [NEEDS_TOOLS]
+- "Create a github release" → [NEEDS_TOOLS]
 
 Examples that are just conversation:
-- "help me think of a new feature" → respond with ideas
-- "what do you think of my code style?" → respond with opinion (mention /review for deeper analysis)
-- "how's the weather?" → respond conversationally
-- "hi there" → respond with greeting
+- "What do you think about using gradients?" → give opinion
+- "Help me brainstorm a new feature" → respond with ideas
+- "How is my code looking?" → suggest /review
+- "Hi there" → greet
 
-IMPORTANT: When the user asks about their code quality, structure, or opinions about their codebase,
-respond conversationally BUT mention that they can run `/review` for an in-depth automated code review.
-
-Now respond to the user:"""
+Now respond:"""
 
         try:
             llm = self._get_llm()
