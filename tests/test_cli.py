@@ -467,3 +467,75 @@ class TestOllamaTimeoutRegression:
                 os.environ["OLLAMA_MODEL"] = original_model
             elif "OLLAMA_MODEL" in os.environ:
                 del os.environ["OLLAMA_MODEL"]
+
+
+class TestFocusRouting:
+    """Regression tests for focus routing and context tracking."""
+
+    def test_focus_context_tracks_file(self):
+        """Test that FocusContext tracks the current file."""
+        from roura_agent.agent.context import FocusContext
+
+        fc = FocusContext()
+        fc.set_focus("/path/to/Beam.swift", symbols=["example", "Beam"])
+
+        assert fc.file_path == "/path/to/Beam.swift"
+        assert "example" in fc.symbols
+        assert "Beam" in fc.symbols
+
+    def test_focus_context_detects_example_symbols(self):
+        """Test that FocusContext detects example-related symbols."""
+        from roura_agent.agent.context import FocusContext
+
+        fc = FocusContext()
+
+        # With example symbol
+        fc.set_focus("/test.swift", symbols=["example", "Beam"])
+        assert fc.has_example_symbols() is True
+
+        # Without example symbol
+        fc.set_focus("/test.swift", symbols=["User", "Profile"])
+        assert fc.has_example_symbols() is False
+
+        # With examples (plural)
+        fc.set_focus("/test.swift", symbols=["examples", "data"])
+        assert fc.has_example_symbols() is True
+
+    def test_focus_context_generates_prompt(self):
+        """Test that FocusContext generates correct focus prompt."""
+        from roura_agent.agent.context import FocusContext
+
+        fc = FocusContext()
+        fc.set_focus("/test/Beam.swift", symbols=["example", "examples"], intent="add data")
+
+        prompt = fc.get_focus_prompt()
+
+        assert "FOCUS CONTEXT:" in prompt
+        assert "File: /test/Beam.swift" in prompt
+        assert "Symbols: example, examples" in prompt
+        assert '"more examples" = add new code instances' in prompt
+
+    def test_focus_context_interpretation_constraint(self):
+        """Test that 'more examples' interpretation is correct for example files."""
+        from roura_agent.agent.context import FocusContext
+
+        fc = FocusContext()
+        fc.set_focus("/Models/Beam.swift", symbols=["example", "examples", "Beam"])
+
+        prompt = fc.get_focus_prompt()
+
+        # The constraint should be present
+        assert "Interpretation constraint" in prompt
+        assert "NOT response examples" in prompt
+
+    def test_agent_context_includes_focus(self):
+        """Test that AgentContext includes FocusContext."""
+        from roura_agent.agent.context import AgentContext
+
+        ctx = AgentContext()
+        assert hasattr(ctx, "focus")
+        assert ctx.focus is not None
+
+        # Set focus
+        ctx.focus.set_focus("/test.py", symbols=["test_func"])
+        assert ctx.focus.file_path == "/test.py"

@@ -35,6 +35,65 @@ class FileContext:
 
 
 @dataclass
+class FocusContext:
+    """
+    Focus context for deterministic routing.
+
+    Tracks the current file being discussed/edited and enforces
+    interpretation rules (e.g., "more examples" means add code instances).
+    """
+    file_path: Optional[str] = None
+    symbols: list[str] = field(default_factory=list)
+    intent: Optional[str] = None
+    last_snippet_hash: Optional[str] = None
+
+    # Interpretation rules
+    EXAMPLE_SYMBOLS = {"example", "examples", "sample", "samples", "mock", "mocks"}
+
+    def set_focus(self, path: str, symbols: list[str] = None, intent: str = None) -> None:
+        """Set the current focus context."""
+        self.file_path = str(Path(path).resolve()) if path else None
+        self.symbols = symbols or []
+        self.intent = intent
+
+    def clear(self) -> None:
+        """Clear focus context."""
+        self.file_path = None
+        self.symbols = []
+        self.intent = None
+        self.last_snippet_hash = None
+
+    def has_example_symbols(self) -> bool:
+        """Check if current symbols include example-related names."""
+        symbol_lower = {s.lower() for s in self.symbols}
+        return bool(symbol_lower & self.EXAMPLE_SYMBOLS)
+
+    def get_focus_prompt(self) -> str:
+        """
+        Generate focus context block for LLM calls.
+
+        This enforces deterministic interpretation of requests.
+        """
+        if not self.file_path:
+            return ""
+
+        lines = ["FOCUS CONTEXT:"]
+        lines.append(f"- File: {self.file_path}")
+
+        if self.symbols:
+            lines.append(f"- Symbols: {', '.join(self.symbols)}")
+
+        if self.intent:
+            lines.append(f"- Intent: {self.intent}")
+
+        # Add interpretation constraint for example symbols
+        if self.has_example_symbols():
+            lines.append('- Interpretation constraint: "more examples" = add new code instances in this file, NOT response examples.')
+
+        return "\n".join(lines)
+
+
+@dataclass
 class FileChange:
     """Record of a file modification for undo support."""
     path: str
@@ -103,6 +162,9 @@ class AgentContext:
 
     # Read set - files the agent has read
     read_set: dict[str, FileContext] = field(default_factory=dict)
+
+    # Focus context - current file/symbols being discussed
+    focus: FocusContext = field(default_factory=FocusContext)
 
     # Conversation history
     messages: list[Message] = field(default_factory=list)

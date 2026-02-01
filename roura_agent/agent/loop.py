@@ -227,6 +227,49 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
         """Get JSON Schema for all registered tools."""
         return registry_to_json_schema(registry)
 
+    def _extract_symbols(self, path: str, content: str) -> list[str]:
+        """
+        Extract symbol names from file content for focus tracking.
+
+        Looks for common patterns like:
+        - Swift: static let example, static var examples
+        - Python: def example, class Example, EXAMPLE =
+        - General: example, examples, sample, mock patterns
+        """
+        import re
+        symbols = []
+        path_lower = path.lower()
+
+        # Swift patterns
+        if path_lower.endswith(".swift"):
+            # static let/var names
+            for match in re.finditer(r'static\s+(?:let|var)\s+(\w+)', content):
+                symbols.append(match.group(1))
+            # struct/class names
+            for match in re.finditer(r'(?:struct|class|enum)\s+(\w+)', content):
+                symbols.append(match.group(1))
+
+        # Python patterns
+        elif path_lower.endswith(".py"):
+            # function definitions
+            for match in re.finditer(r'def\s+(\w+)', content):
+                symbols.append(match.group(1))
+            # class definitions
+            for match in re.finditer(r'class\s+(\w+)', content):
+                symbols.append(match.group(1))
+            # constants (UPPER_CASE)
+            for match in re.finditer(r'^([A-Z][A-Z_0-9]+)\s*=', content, re.MULTILINE):
+                symbols.append(match.group(1))
+
+        # TypeScript/JavaScript patterns
+        elif path_lower.endswith((".ts", ".tsx", ".js", ".jsx")):
+            for match in re.finditer(r'(?:const|let|var|function)\s+(\w+)', content):
+                symbols.append(match.group(1))
+            for match in re.finditer(r'(?:class|interface|type)\s+(\w+)', content):
+                symbols.append(match.group(1))
+
+        return list(set(symbols))  # Deduplicate
+
     def _classify_intent(self, message: str) -> tuple[bool, str]:
         """
         Two-phase intent classification:
@@ -367,11 +410,15 @@ User: {message}"""
         try:
             result = tool.execute(**args)
 
-            # Track reads in context
+            # Track reads in context and set focus
             if tool_name == "fs.read" and result.success:
                 path = args.get("path")
                 content = result.output.get("content", "") if result.output else ""
                 self.context.add_to_read_set(path, content)
+
+                # Set focus context for this file
+                symbols = self._extract_symbols(path, content)
+                self.context.focus.set_focus(path, symbols=symbols)
 
             # Track file modifications for undo
             if tool_name in ("fs.write", "fs.edit") and result.success:
@@ -578,6 +625,15 @@ User: {message}"""
 
         llm = self._get_llm()
         messages = self.context.get_messages_for_llm()
+
+        # Prepend focus context if available
+        focus_prompt = self.context.focus.get_focus_prompt()
+        if focus_prompt and messages:
+            # Find the last user message and prepend focus context
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i].get("role") == "user":
+                    messages[i]["content"] = f"{focus_prompt}\n\n{messages[i]['content']}"
+                    break
 
         # Debug: log what we're sending
         if self.config.debug:
