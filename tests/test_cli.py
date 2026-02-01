@@ -392,3 +392,78 @@ class TestHelperFunctions:
 
         result = _run_with_spinner(test_func, "Testing...", 1, 2)
         assert result == 3
+
+
+class TestBrandingRegression:
+    """Regression tests for branding requirements."""
+
+    def test_banner_displays_roura_io(self):
+        """Test that banner ASCII art displays ROURA.IO."""
+        from roura_agent.branding import LOGO
+        # The ASCII art uses block characters to spell ROURA.IO
+        # Verify the banner has the correct structure (R O U R A . I O)
+        # Each letter is represented by 6 lines of block/box characters
+        lines = [line for line in LOGO.split('\n') if '█' in line or '═' in line]
+        assert len(lines) == 6, f"Banner should have 6 lines of block characters, got {len(lines)}"
+        # The banner should be wider for ROURA.IO than just ROURA
+        # ROURA alone is ~42 chars, ROURA.IO should be ~58+ chars
+        widest_line = max(len(line) for line in lines)
+        assert widest_line >= 55, f"Banner should include .IO (width={widest_line})"
+
+    def test_brand_company_is_roura_io(self):
+        """Test that company brand is Roura.io."""
+        from roura_agent.branding import BRAND_COMPANY
+        assert BRAND_COMPANY == "Roura.io"
+
+
+class TestOllamaTimeoutRegression:
+    """Regression tests for Ollama timeout configuration."""
+
+    def test_default_timeout_is_300_seconds(self):
+        """Test that default timeout is 300s for large models."""
+        from roura_agent.llm.ollama import OllamaProvider
+        assert OllamaProvider.DEFAULT_TIMEOUT == 300.0
+
+    def test_timeout_configurable_via_env(self):
+        """Test that OLLAMA_TIMEOUT env var is respected."""
+        import os
+        from roura_agent.llm.ollama import OllamaProvider
+
+        original = os.environ.get("OLLAMA_TIMEOUT")
+        original_model = os.environ.get("OLLAMA_MODEL")
+        try:
+            os.environ["OLLAMA_MODEL"] = "test-model"
+            os.environ["OLLAMA_TIMEOUT"] = "600"
+            provider = OllamaProvider()
+            assert provider._timeout == 600.0
+        finally:
+            if original is not None:
+                os.environ["OLLAMA_TIMEOUT"] = original
+            elif "OLLAMA_TIMEOUT" in os.environ:
+                del os.environ["OLLAMA_TIMEOUT"]
+            if original_model is not None:
+                os.environ["OLLAMA_MODEL"] = original_model
+            elif "OLLAMA_MODEL" in os.environ:
+                del os.environ["OLLAMA_MODEL"]
+
+    def test_explicit_timeout_overrides_env(self):
+        """Test that explicit timeout param overrides env var."""
+        import os
+        from roura_agent.llm.ollama import OllamaProvider
+
+        original = os.environ.get("OLLAMA_TIMEOUT")
+        original_model = os.environ.get("OLLAMA_MODEL")
+        try:
+            os.environ["OLLAMA_MODEL"] = "test-model"
+            os.environ["OLLAMA_TIMEOUT"] = "600"
+            provider = OllamaProvider(timeout=120.0)
+            assert provider._timeout == 120.0
+        finally:
+            if original is not None:
+                os.environ["OLLAMA_TIMEOUT"] = original
+            elif "OLLAMA_TIMEOUT" in os.environ:
+                del os.environ["OLLAMA_TIMEOUT"]
+            if original_model is not None:
+                os.environ["OLLAMA_MODEL"] = original_model
+            elif "OLLAMA_MODEL" in os.environ:
+                del os.environ["OLLAMA_MODEL"]

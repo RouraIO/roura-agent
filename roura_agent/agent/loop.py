@@ -237,24 +237,39 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
             (needs_tools, response) - If needs_tools is False, response contains the conversational reply.
         """
         # Phase 1: Classification ONLY
+        # First check for code review triggers - these ALWAYS need tools
+        review_triggers = [
+            "how is my code",
+            "review my code",
+            "audit this repo",
+            "audit the repo",
+            "how are we doing",
+            "look at the project",
+            "check my code",
+            "analyze the code",
+            "code quality",
+            "what needs improvement",
+        ]
+        message_lower = message.lower()
+        for trigger in review_triggers:
+            if trigger in message_lower:
+                return True, ""  # Needs tools - automatic repo inspection
+
         classification_prompt = f"""Classify this user message. Reply with ONLY one word: TOOLS or CHAT
 
-TOOLS - ONLY if user explicitly:
+TOOLS - if user:
 - Names a SPECIFIC FILE (e.g., "FeedCell.swift", "main.py")
 - Says "read", "edit", "modify", "add to", "fix" + specific location
 - Requests git/command operations (commit, push, run)
+- Asks to review, audit, or analyze code/project
 
-CHAT - for everything else including:
+CHAT - for:
 - Greetings, casual conversation
-- General questions ("how is my code", "what do you think")
-- Brainstorming, opinions, advice
-- Questions that don't name specific files
-
-When in doubt, choose CHAT. Only choose TOOLS when clearly necessary.
+- General opinions, brainstorming
+- Questions about concepts (not the repo)
 
 Examples:
 - "hi there" → CHAT
-- "how is my code looking?" → CHAT (general, no specific file)
 - "what do you think about X?" → CHAT
 - "In FeedCell.swift add a gradient" → TOOLS (specific file + action)
 - "read main.py" → TOOLS (specific file)
@@ -589,7 +604,8 @@ User: {message}"""
                 )
             else:
                 text = Text.from_markup(
-                    f" Thinking... [{Colors.DIM}]({elapsed:.1f}s)[/{Colors.DIM}]"
+                    f" [{Colors.INFO}]Roura.IO agent[/{Colors.INFO}] Thinking... "
+                    f"[{Colors.DIM}]({elapsed:.1f}s)[/{Colors.DIM}]"
                 )
             # Combine spinner and text
             from rich.table import Table
@@ -725,9 +741,10 @@ User: {message}"""
                 last_user_msg = msg.content.strip()
                 break
 
-        # Show "Thinking..." spinner during classification (conversational mode)
+        # Show "Roura.IO agent Thinking..." spinner during classification
+        spinner_text = Text.from_markup(f" [{Colors.INFO}]Roura.IO agent[/{Colors.INFO}] Thinking...")
         with Live(
-            Spinner("dots", text=" Thinking...", style=Colors.PRIMARY),
+            Spinner("dots", text=spinner_text, style=Colors.PRIMARY),
             console=self.console,
             refresh_per_second=20,
             transient=True,

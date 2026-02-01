@@ -42,11 +42,14 @@ class OllamaProvider(LLMProvider):
         "mistral-nemo",
     }
 
+    # Default timeout: 300s for large models (allows time-to-first-token for big models)
+    DEFAULT_TIMEOUT: float = 300.0
+
     def __init__(
         self,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
-        timeout: float = 120.0,
+        timeout: Optional[float] = None,
     ):
         """
         Initialize Ollama provider.
@@ -54,13 +57,18 @@ class OllamaProvider(LLMProvider):
         Args:
             base_url: Ollama API base URL (default: OLLAMA_BASE_URL env var)
             model: Model name (default: OLLAMA_MODEL env var)
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds (default: OLLAMA_TIMEOUT env var or 300s)
         """
         self._base_url = (
             base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         ).rstrip("/")
         self._model = (model or os.getenv("OLLAMA_MODEL", "")).strip()
-        self._timeout = timeout
+        # Timeout priority: explicit param > env var > default
+        if timeout is not None:
+            self._timeout = timeout
+        else:
+            env_timeout = os.getenv("OLLAMA_TIMEOUT")
+            self._timeout = float(env_timeout) if env_timeout else self.DEFAULT_TIMEOUT
 
         if not self._model:
             raise RouraError(ErrorCode.MODEL_NOT_SET)
