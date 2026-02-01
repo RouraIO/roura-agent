@@ -539,3 +539,97 @@ class TestFocusRouting:
         # Set focus
         ctx.focus.set_focus("/test.py", symbols=["test_func"])
         assert ctx.focus.file_path == "/test.py"
+
+
+class TestExecutionLoopRegression:
+    """Regression tests for the v4.1.0 execution loop (Apply → run → feed logs → repeat)."""
+
+    def test_agent_loop_has_verification_methods(self):
+        """Test that AgentLoop has verification loop methods."""
+        from roura_agent.agent.loop import AgentLoop
+
+        loop = AgentLoop()
+
+        # Check that verification methods exist
+        assert hasattr(loop, "_get_verification_commands")
+        assert hasattr(loop, "_run_verification_loop")
+        assert callable(loop._get_verification_commands)
+        assert callable(loop._run_verification_loop)
+
+    def test_verification_commands_for_python(self, tmp_path):
+        """Test that Python project gets pytest verification command."""
+        from roura_agent.agent.loop import AgentLoop
+
+        # Create a mock Python project
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "test"')
+        (tmp_path / "tests").mkdir()
+
+        loop = AgentLoop()
+        loop.context.project_root = str(tmp_path)
+
+        commands = loop._get_verification_commands()
+
+        # Should detect pytest
+        assert len(commands) > 0
+        assert any("pytest" in cmd for _, cmd in commands)
+
+    def test_verification_commands_for_node(self, tmp_path):
+        """Test that Node.js project gets npm test verification command."""
+        import json
+        from roura_agent.agent.loop import AgentLoop
+
+        # Create a mock Node.js project
+        (tmp_path / "package.json").write_text(json.dumps({
+            "name": "test",
+            "scripts": {"test": "jest", "build": "tsc"}
+        }))
+
+        loop = AgentLoop()
+        loop.context.project_root = str(tmp_path)
+
+        commands = loop._get_verification_commands()
+
+        # Should detect npm test
+        assert len(commands) >= 2  # test and build
+        assert any("npm test" in cmd for _, cmd in commands)
+        assert any("npm run build" in cmd for _, cmd in commands)
+
+    def test_verification_commands_for_swift(self, tmp_path):
+        """Test that Swift project gets swift build verification command."""
+        from roura_agent.agent.loop import AgentLoop
+
+        # Create a mock Swift package
+        (tmp_path / "Package.swift").write_text('// swift-tools-version:5.9')
+
+        loop = AgentLoop()
+        loop.context.project_root = str(tmp_path)
+
+        commands = loop._get_verification_commands()
+
+        # Should detect swift build
+        assert len(commands) >= 1
+        assert any("swift build" in cmd for _, cmd in commands)
+
+    def test_verification_commands_empty_for_unknown_project(self, tmp_path):
+        """Test that unknown project type returns no verification commands."""
+        from roura_agent.agent.loop import AgentLoop
+
+        # Create an empty directory
+        loop = AgentLoop()
+        loop.context.project_root = str(tmp_path)
+
+        commands = loop._get_verification_commands()
+
+        # Should be empty for unknown project
+        assert commands == []
+
+    def test_intent_type_enum_exists(self):
+        """Test that IntentType enum is properly defined."""
+        from roura_agent.agent.loop import IntentType
+
+        # Check all 5 intent types from v4.1.0 contract
+        assert hasattr(IntentType, "CHAT")
+        assert hasattr(IntentType, "CODE_WRITE")
+        assert hasattr(IntentType, "CODE_REVIEW")
+        assert hasattr(IntentType, "DIAGNOSE")
+        assert hasattr(IntentType, "RESEARCH")

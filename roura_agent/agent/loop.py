@@ -64,6 +64,19 @@ class AgentState(Enum):
     ERROR = "error"
 
 
+class IntentType(Enum):
+    """
+    Intent routing types per v4.1.0 contract.
+
+    Each type triggers different agent behavior and tool availability.
+    """
+    CHAT = "chat"              # Casual conversation, opinions, brainstorming
+    CODE_WRITE = "code_write"  # Write/modify code in specific files
+    CODE_REVIEW = "code_review"  # Review, audit, analyze code quality
+    DIAGNOSE = "diagnose"      # Debug errors, investigate issues
+    RESEARCH = "research"      # Explore codebase, understand architecture
+
+
 @dataclass
 class AgentConfig:
     """Agent configuration."""
@@ -173,6 +186,7 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
         self._orchestrator: Optional[Orchestrator] = None
         self._current_agent: Optional[str] = None  # Track which agent is working
         self._consecutive_failures: int = 0  # Track failures for escalation
+        self._current_intent: IntentType = IntentType.CHAT  # Track current intent type
 
         # Initialize orchestrator if multi-agent mode is enabled
         if self.config.multi_agent_mode:
@@ -270,88 +284,117 @@ Available tools: fs.read, fs.write, fs.edit, fs.list, git.status, git.diff, git.
 
         return list(set(symbols))  # Deduplicate
 
-    def _classify_intent(self, message: str) -> tuple[bool, str]:
+    def _classify_intent(self, message: str) -> tuple[IntentType, str]:
         """
-        Two-phase intent classification:
-        1. First, classify ONLY (TOOLS or CHAT)
-        2. If CHAT, get conversational response
+        5-type intent classification per v4.1.0 contract.
+
+        Intent types:
+        - CHAT: Casual conversation, opinions, brainstorming
+        - CODE_WRITE: Write/modify code in specific files
+        - CODE_REVIEW: Review, audit, analyze code quality
+        - DIAGNOSE: Debug errors, investigate issues
+        - RESEARCH: Explore codebase, understand architecture
 
         Returns:
-            (needs_tools, response) - If needs_tools is False, response contains the conversational reply.
+            (intent_type, response) - If CHAT, response contains conversational reply.
         """
-        # Phase 1: Classification ONLY
-        # First check for code review triggers - these ALWAYS need tools
-        review_triggers = [
-            "how is my code",
-            "review my code",
-            "audit this repo",
-            "audit the repo",
-            "how are we doing",
-            "look at the project",
-            "check my code",
-            "analyze the code",
-            "code quality",
-            "what needs improvement",
-        ]
         message_lower = message.lower()
+
+        # Pattern-based fast classification (deterministic)
+        # CODE_REVIEW triggers
+        review_triggers = [
+            "how is my code", "review my code", "audit this repo", "audit the repo",
+            "how are we doing", "look at the project", "check my code", "analyze the code",
+            "code quality", "what needs improvement", "review this", "code review",
+        ]
         for trigger in review_triggers:
             if trigger in message_lower:
-                return True, ""  # Needs tools - automatic repo inspection
+                return IntentType.CODE_REVIEW, ""
 
-        classification_prompt = f"""Classify this user message. Reply with ONLY one word: TOOLS or CHAT
+        # DIAGNOSE triggers
+        diagnose_triggers = [
+            "error", "bug", "crash", "failing", "broken", "doesn't work", "not working",
+            "debug", "fix this", "why is", "what's wrong", "issue with", "problem with",
+        ]
+        for trigger in diagnose_triggers:
+            if trigger in message_lower:
+                return IntentType.DIAGNOSE, ""
 
-TOOLS - if user:
-- Names a SPECIFIC FILE (e.g., "FeedCell.swift", "main.py")
-- Says "read", "edit", "modify", "add to", "fix" + specific location
-- Requests git/command operations (commit, push, run)
-- Asks to review, audit, or analyze code/project
+        # RESEARCH triggers
+        research_triggers = [
+            "how does", "what is", "explain", "where is", "find", "search for",
+            "understand", "architecture", "structure", "overview", "codebase",
+        ]
+        for trigger in research_triggers:
+            if trigger in message_lower:
+                # Check if it's about the repo or general concepts
+                repo_indicators = ["this", "the", "my", "our", "repo", "project", "code", "file"]
+                if any(ind in message_lower for ind in repo_indicators):
+                    return IntentType.RESEARCH, ""
 
-CHAT - for:
-- Greetings, casual conversation
-- General opinions, brainstorming
-- Questions about concepts (not the repo)
+        # CODE_WRITE triggers
+        write_triggers = [
+            "add", "create", "write", "implement", "build", "make", "update",
+            "modify", "change", "edit", "refactor", "move", "rename", "delete",
+        ]
+        # Must have file/location context
+        file_indicators = [".swift", ".py", ".ts", ".js", ".tsx", ".jsx", ".go", ".rs", ".java", ".kt"]
+        has_file = any(ext in message_lower for ext in file_indicators)
+        has_write = any(trigger in message_lower for trigger in write_triggers)
+        if has_write and (has_file or "file" in message_lower or "function" in message_lower or "class" in message_lower):
+            return IntentType.CODE_WRITE, ""
 
-Examples:
-- "hi there" → CHAT
-- "what do you think about X?" → CHAT
-- "In FeedCell.swift add a gradient" → TOOLS (specific file + action)
-- "read main.py" → TOOLS (specific file)
-- "create a commit" → TOOLS (git action)
+        # Git operations are CODE_WRITE
+        git_triggers = ["commit", "push", "pull", "merge", "branch", "tag", "release"]
+        if any(trigger in message_lower for trigger in git_triggers):
+            return IntentType.CODE_WRITE, ""
+
+        # Fall back to LLM classification for ambiguous cases
+        classification_prompt = f"""Classify this user message into ONE of these categories. Reply with ONLY the category name:
+
+CHAT - Casual conversation, greetings, opinions, general discussion
+CODE_WRITE - Requests to write, modify, or create code
+CODE_REVIEW - Requests to review, audit, or analyze code quality
+DIAGNOSE - Debugging, investigating errors or issues
+RESEARCH - Exploring codebase, understanding architecture
 
 User message: "{message}"
 
-One word only:"""
+Category:"""
 
         try:
             llm = self._get_llm()
-
-            # Phase 1: Get classification
             response = llm.chat([{"role": "user", "content": classification_prompt}], tools=None)
 
             if response.error:
-                return True, ""  # Default to tools on error
+                return IntentType.CODE_WRITE, ""  # Default to code_write on error
 
-            classification = (response.content or "").strip().upper()
+            result = (response.content or "").strip().upper()
 
-            # Check classification
-            if "TOOLS" in classification:
-                return True, ""
-
-            # Phase 2: Get conversational response
-            chat_prompt = f"""You are Roura Agent, a friendly AI coding assistant. Respond naturally to this message.
+            if "CODE_WRITE" in result:
+                return IntentType.CODE_WRITE, ""
+            elif "CODE_REVIEW" in result:
+                return IntentType.CODE_REVIEW, ""
+            elif "DIAGNOSE" in result:
+                return IntentType.DIAGNOSE, ""
+            elif "RESEARCH" in result:
+                return IntentType.RESEARCH, ""
+            elif "CHAT" in result:
+                # Get conversational response
+                chat_prompt = f"""You are Roura Agent, a friendly AI coding assistant. Respond naturally to this message.
 If they ask about their code quality, mention they can run /review for deeper analysis.
 
 User: {message}"""
+                chat_response = llm.chat([{"role": "user", "content": chat_prompt}], tools=None)
+                if chat_response.error:
+                    return IntentType.CODE_WRITE, ""
+                return IntentType.CHAT, chat_response.content.strip() if chat_response.content else ""
 
-            chat_response = llm.chat([{"role": "user", "content": chat_prompt}], tools=None)
-
-            if chat_response.error:
-                return True, ""  # Fall back to tools
-
-            return False, chat_response.content.strip() if chat_response.content else ""
+            # Default to CODE_WRITE for unrecognized
+            return IntentType.CODE_WRITE, ""
 
         except Exception:
-            return True, ""  # Default to tools on error
+            return IntentType.CODE_WRITE, ""  # Default to code_write on error
 
     def _execute_tool(self, tool_call: ToolCall) -> ToolResult:
         """Execute a single tool with constraint checking and undo tracking."""
@@ -626,6 +669,21 @@ User: {message}"""
         llm = self._get_llm()
         messages = self.context.get_messages_for_llm()
 
+        # GENERIC ANSWER FAIL-SAFE (v4.1.0 Contract)
+        # For code-related intents, require at least one file read before proceeding
+        code_intents = {IntentType.CODE_WRITE, IntentType.CODE_REVIEW, IntentType.DIAGNOSE}
+        if self._current_intent in code_intents and not self.context.read_set:
+            # Force file exploration before answering
+            fail_safe_prompt = """FAIL-SAFE ACTIVATED: No repo files have been read yet.
+
+Before providing any code advice or making changes, you MUST:
+1. Use fs.list to explore the project structure
+2. Use fs.read to open relevant files
+3. Ground your response in actual repo content
+
+DO NOT provide generic examples. Read the actual code first."""
+            messages.append({"role": "system", "content": fail_safe_prompt})
+
         # Prepend focus context if available
         focus_prompt = self.context.focus.get_focus_prompt()
         if focus_prompt and messages:
@@ -805,9 +863,12 @@ User: {message}"""
             refresh_per_second=20,
             transient=True,
         ):
-            needs_tools, conv_response = self._classify_intent(last_user_msg)
+            intent_type, conv_response = self._classify_intent(last_user_msg)
 
-        if not needs_tools:
+        # Store current intent for agent routing
+        self._current_intent = intent_type
+
+        if intent_type == IntentType.CHAT:
             # Conversational response
             if conv_response:
                 self.console.print()
@@ -821,6 +882,15 @@ User: {message}"""
                 self.console.print()
                 self.console.print(f"[{Colors.DIM}]No response. Try rephrasing or use /clear to start fresh.[/{Colors.DIM}]")
             return False
+
+        # Show intent-specific mode label
+        mode_label = {
+            IntentType.CODE_WRITE: "MODE: TOOLING",
+            IntentType.CODE_REVIEW: "MODE: TOOLING (Review)",
+            IntentType.DIAGNOSE: "MODE: TOOLING (Diagnose)",
+            IntentType.RESEARCH: "MODE: TOOLING (Research)",
+        }.get(intent_type, "MODE: TOOLING")
+        self.console.print(f"[{Colors.DIM}]{mode_label}[/{Colors.DIM}]")
 
         # Task that needs tools - show agent name with spinner
         # The _stream_response already shows "[Agent] thinking..." for tool mode
@@ -838,6 +908,15 @@ User: {message}"""
         if response.error:
             self._consecutive_failures += 1
             self.console.print(f"\n[{Colors.ERROR}]{Icons.ERROR} {response.error}[/{Colors.ERROR}]")
+
+            # STALL DETECTION (v4.1.0 Contract): Spawn Unblocker after 2 failures
+            if self._consecutive_failures >= 2:
+                self.console.print(f"\n[{Colors.WARNING}]Stall detected ({self._consecutive_failures} failures). Analyzing...[/{Colors.WARNING}]")
+                unblocker_diagnosis = self._run_unblocker(response.error)
+                if unblocker_diagnosis:
+                    self.console.print(f"\n[{Colors.INFO}]Unblocker diagnosis:[/{Colors.INFO}]")
+                    self.console.print(f"[{Colors.DIM}]{unblocker_diagnosis}[/{Colors.DIM}]")
+
             # Check if we should offer escalation (only after multiple failures)
             if self._should_offer_escalation():
                 if self._offer_escalation(f"Local model failed {self._consecutive_failures} times. Try cloud model?"):
@@ -925,8 +1004,125 @@ User: {message}"""
             # Add result to context for next LLM turn
             self.context.add_tool_result(tool_call.id, result.to_dict())
 
+        # EXECUTION LOOP (v4.1.0 Contract): Run verification after code changes
+        # Detect if we modified code and should verify
+        code_modified = any(
+            tc.name in ("fs.write", "fs.edit")
+            for tc in response.tool_calls
+        )
+
+        if code_modified and self._current_intent == IntentType.CODE_WRITE:
+            verification_result = self._run_verification_loop()
+            if verification_result:
+                # Add verification results to context for LLM to see
+                self.context.add_message(
+                    role="system",
+                    content=f"VERIFICATION RESULTS:\n{verification_result}"
+                )
+
         # Continue the loop - LLM needs to process tool results
         return True
+
+    def _get_verification_commands(self) -> list[tuple[str, str]]:
+        """
+        Get build/test commands based on project type.
+
+        Returns list of (description, command) tuples.
+        """
+        commands = []
+
+        if not self.context.project_root:
+            return commands
+
+        project_root = Path(self.context.project_root)
+
+        # Python projects
+        if (project_root / "pyproject.toml").exists() or (project_root / "setup.py").exists():
+            if (project_root / "pytest.ini").exists() or (project_root / "tests").exists():
+                commands.append(("pytest", "pytest --tb=short -q"))
+            else:
+                commands.append(("python check", "python -m py_compile $(find . -name '*.py' -not -path './.venv/*' | head -5)"))
+
+        # Node.js/TypeScript projects
+        if (project_root / "package.json").exists():
+            try:
+                import json
+                pkg = json.loads((project_root / "package.json").read_text())
+                scripts = pkg.get("scripts", {})
+                if "test" in scripts:
+                    commands.append(("npm test", "npm test"))
+                if "build" in scripts:
+                    commands.append(("npm build", "npm run build"))
+                if "typecheck" in scripts:
+                    commands.append(("typecheck", "npm run typecheck"))
+            except Exception:
+                pass
+
+        # Swift projects
+        if (project_root / "Package.swift").exists():
+            commands.append(("swift build", "swift build"))
+            commands.append(("swift test", "swift test"))
+
+        # Go projects
+        if (project_root / "go.mod").exists():
+            commands.append(("go build", "go build ./..."))
+            commands.append(("go test", "go test ./..."))
+
+        # Rust projects
+        if (project_root / "Cargo.toml").exists():
+            commands.append(("cargo build", "cargo build"))
+            commands.append(("cargo test", "cargo test"))
+
+        # Xcode projects (for iOS/macOS)
+        xcode_projects = list(project_root.glob("*.xcodeproj")) + list(project_root.glob("*.xcworkspace"))
+        if xcode_projects:
+            commands.append(("xcodebuild", "xcodebuild build -quiet"))
+
+        return commands
+
+    def _run_verification_loop(self, max_attempts: int = 3) -> Optional[str]:
+        """
+        Run build/test verification after code changes.
+
+        The execution loop from v4.1.0 contract:
+        Apply → run → feed logs → repeat
+
+        Returns the verification output (for feeding back to LLM).
+        """
+        commands = self._get_verification_commands()
+
+        if not commands:
+            return None
+
+        # Only run the first/most relevant command for now
+        description, command = commands[0]
+
+        self.console.print(f"\n[{Colors.INFO}]MODE: VERIFY[/{Colors.INFO}]")
+        self.console.print(f"[{Colors.DIM}]Running: {description}[/{Colors.DIM}]")
+
+        # Execute the verification command
+        from ..tools.shell import shell_exec
+        result = shell_exec.execute(command=command, timeout=60.0, cwd=self.context.project_root)
+
+        if result.success and result.output:
+            exit_code = result.output.get("exit_code", -1)
+            stdout = result.output.get("stdout", "")
+            stderr = result.output.get("stderr", "")
+
+            if exit_code == 0:
+                self.console.print(f"[{Colors.SUCCESS}]{Icons.SUCCESS} Verification passed[/{Colors.SUCCESS}]")
+                return f"✓ {description}: PASSED\n{stdout[:500]}" if stdout else f"✓ {description}: PASSED"
+            else:
+                self.console.print(f"[{Colors.ERROR}]{Icons.ERROR} Verification failed (exit {exit_code})[/{Colors.ERROR}]")
+                # Truncate output for context
+                output = stderr if stderr else stdout
+                return f"✗ {description}: FAILED (exit {exit_code})\n```\n{output[:1500]}\n```"
+
+        elif result.error:
+            self.console.print(f"[{Colors.WARNING}]{Icons.WARNING} Verification error: {result.error}[/{Colors.WARNING}]")
+            return f"✗ {description}: ERROR - {result.error}"
+
+        return None
 
     def _determine_agent(self, user_input: str) -> str:
         """
@@ -1779,6 +1975,49 @@ roura-agent setup    # Reconfigure settings
 
         except Exception as e:
             self.console.print(f"[{Colors.ERROR}]Review failed: {e}[/{Colors.ERROR}]")
+
+    def _run_unblocker(self, error_message: str) -> Optional[str]:
+        """
+        Run Unblocker agent to diagnose and resolve stalls.
+
+        The Unblocker analyzes:
+        - Recent error messages
+        - Current context state
+        - Available tools and their state
+
+        Returns diagnosis and suggested resolution.
+        """
+        try:
+            # Gather diagnostic info
+            context_summary = self.context.get_context_summary()
+            files_read = list(self.context.read_set.keys())[:5]
+            current_intent = self._current_intent.value if self._current_intent else "unknown"
+
+            unblocker_prompt = f"""You are the UNBLOCKER agent. Diagnose why the system is stalled.
+
+ERROR: {error_message}
+
+CONTEXT:
+- Intent: {current_intent}
+- Files read: {files_read if files_read else 'None'}
+- Failures: {self._consecutive_failures}
+
+{context_summary}
+
+Provide a BRIEF diagnosis (1-2 sentences) and ONE concrete next step.
+Format: "Diagnosis: ... | Next step: ..."
+"""
+
+            llm = self._get_llm()
+            response = llm.chat([{"role": "user", "content": unblocker_prompt}], tools=None)
+
+            if response.content:
+                return response.content.strip()
+
+        except Exception:
+            pass  # Unblocker failure shouldn't block main flow
+
+        return None
 
     def _should_offer_escalation(self) -> bool:
         """Check if we should offer to escalate to a more powerful model.

@@ -505,3 +505,83 @@ For each issue found:
             return True, 0.6
 
         return False, 0.0
+
+
+# =============================================================================
+# CONTRACT v4.1.0 AGENT ALIASES
+# =============================================================================
+# These aliases map contract-specified agent names to implementation agents.
+# Per v4.1.0 contract: ContextRouter, RepoGrounder, PatchDesigner, Implementer,
+# Verifier, ReleaseSteward, Unblocker
+
+# Implementer: Writes code into specific files
+Implementer = CodeAgent
+
+# PatchDesigner: Plans and designs code patches (uses CodeAgent's capabilities)
+PatchDesigner = CodeAgent
+
+# RepoGrounder: Reads files to ground responses in actual content
+RepoGrounder = ResearchAgent
+
+# Verifier: Runs builds and tests to verify changes
+Verifier = TestingAgent
+
+# ReleaseSteward: Handles git operations and releases
+ReleaseSteward = GitAgent
+
+# Unblocker: Diagnoses stalls and suggests resolutions
+Unblocker = DebugAgent
+
+
+class ContextRouter(BaseAgent):
+    """
+    Contract v4.1.0 ContextRouter: Routes requests to appropriate agents.
+
+    Responsible for:
+    - Classifying intent (CHAT, CODE_WRITE, CODE_REVIEW, DIAGNOSE, RESEARCH)
+    - Determining which specialized agent should handle the task
+    - Managing context switches between modes
+    """
+
+    name = "context_router"
+    description = "Routes requests to appropriate specialized agents"
+    capabilities = [AgentCapability.RESEARCH]
+
+    allowed_tools = {'fs.list'}  # Minimal tools - just for context awareness
+
+    PATTERNS = [
+        r"route\b",
+        r"which\s+agent",
+        r"delegate\b",
+    ]
+
+    @property
+    def system_prompt(self) -> str:
+        return """You are the ContextRouter agent. Your job is to analyze requests and route them to the correct specialized agent.
+
+Available agents:
+- CodeAgent (Implementer): For writing/modifying code
+- ResearchAgent (RepoGrounder): For exploring codebase, reading files
+- TestingAgent (Verifier): For running tests and builds
+- DebugAgent (Unblocker): For debugging and diagnosing issues
+- GitAgent (ReleaseSteward): For git operations and releases
+- ReviewAgent: For code review and quality analysis
+
+Classify intent as:
+- CODE_WRITE: Request to write or modify code
+- CODE_REVIEW: Request to review code quality
+- DIAGNOSE: Request to debug or fix issues
+- RESEARCH: Request to explore or understand codebase
+
+Route to the most appropriate agent based on intent."""
+
+    def can_handle(
+        self,
+        task: str,
+        context: Optional[AgentContext] = None,
+    ) -> tuple[bool, float]:
+        # Router handles meta-routing questions
+        task_lower = task.lower()
+        if any(re.search(p, task_lower) for p in self.PATTERNS):
+            return True, 0.8
+        return False, 0.0

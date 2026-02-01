@@ -84,6 +84,14 @@ from .specialized import (
     ResearchAgent,
     ReviewAgent,
     TestingAgent,
+    # Contract v4.1.0 agent aliases
+    ContextRouter,
+    Implementer,
+    PatchDesigner,
+    RepoGrounder,
+    Verifier,
+    ReleaseSteward,
+    Unblocker,
 )
 
 
@@ -199,6 +207,14 @@ __all__ = [
     "ResearchAgent",
     "GitAgent",
     "ReviewAgent",
+    # Contract v4.1.0 agents
+    "ContextRouter",
+    "Implementer",
+    "PatchDesigner",
+    "RepoGrounder",
+    "Verifier",
+    "ReleaseSteward",
+    "Unblocker",
     # IDE Integrations
     "CursorAgent",
     "XcodeAgent",
